@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "previders": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
