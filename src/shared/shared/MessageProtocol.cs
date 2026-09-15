@@ -1,4 +1,5 @@
-﻿using shared.Models;
+﻿using shared.Interfaces;
+using shared.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,15 +20,15 @@ namespace shared
             Converters = { new JsonStringEnumConverter() }
         };
 
-        public static async Task WriteMessageAsync(NetworkStream stream, MessageEnvelope msg)
+        public static async Task WriteMessageAsync(ITransport stream, MessageEnvelope msg)
         {
             byte[] payload = JsonSerializer.SerializeToUtf8Bytes(msg, JsonOptions);
             byte[] lengthPrefix = BitConverter.GetBytes(payload.Length);
 
-            await stream.WriteAsync(lengthPrefix);
-            await stream.WriteAsync(payload);
+            await stream.sendAsync(lengthPrefix);
+            await stream.sendAsync(payload);
         }
-        public static async Task<MessageEnvelope?> ReadMessageAsync(NetworkStream stream)
+        public static async Task<MessageEnvelope?> ReadMessageAsync(ITransport stream)
         {
             byte[] lengthBuffer = new byte[4];
             int read = await ReadExactAsync(stream, lengthBuffer, 4);
@@ -59,12 +60,12 @@ namespace shared
                 throw new InvalidDataException($"Payload invalid: {ex.Message}");
             }
         }
-        private static async Task<int> ReadExactAsync(NetworkStream stream, byte[] buffer, int count)
+        private static async Task<int> ReadExactAsync(ITransport stream, byte[] buffer, int count)
         {
             int totalRead = 0;
             while (totalRead < count)
             {
-                int n = await stream.ReadAsync(buffer, totalRead, count - totalRead);
+                int n = await stream.receiveAsync(buffer.AsMemory(totalRead, count - totalRead));
                 if (n == 0) { return totalRead; }
                 totalRead += n;
             }

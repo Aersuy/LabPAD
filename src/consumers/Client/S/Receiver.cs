@@ -1,34 +1,120 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+﻿using shared;
+using shared.Interfaces;
+using shared.IImplementations;
+using shared.Models;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace receivers.S
 {
     public class Receiver
     {
-        private TcpListener? _listener;
-        private static readonly IPAddress TestIp = IPAddress.Parse("127.0.0.1");
-        const int TestPort = 6001;
-        private void Start()
+        private Socket? _listenerSocket;
+        private Socket? _brokerSocket;
+        private ITransport? _transport;
+        private Guid _id;
+
+        public void Start()
         {
-            _listener = new TcpListener(TestIp, TestPort);
-            _listener.Start();
-            Console.WriteLine($"Receiver listening on {TestPort}...");
+            //_listenerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            //_listenerSocket.Bind(new IPEndPoint(TestIp, TestPort));
+            //_listenerSocket.Listen();
+            _id = Guid.NewGuid();
         }
-        public async Task RegisterWithBroker()
+
+        public async Task<bool> RegisterWithBroker()
         {
             Console.WriteLine("Give broker ip");
-            IPAddress brokerIp = IPAddress.Parse(Console.ReadLine()!);
+            IPAddress brokerIp =
+                IPAddress.Parse(Console.ReadLine()!);
+
             Console.WriteLine("Give broker port");
-            int BrokerPort = int.Parse(Console.ReadLine()!);
-            var Endpoint = new IPEndPoint(brokerIp, BrokerPort);
-            using TcpClient client = new();
-            await client.ConnectAsync(Endpoint);
+            int brokerPort =
+                int.Parse(Console.ReadLine()!);
+
+            var endpoint =
+                new IPEndPoint(brokerIp, brokerPort);
+
+            _brokerSocket = new Socket(
+                AddressFamily.InterNetwork,
+                SocketType.Stream,
+                ProtocolType.Tcp
+            );
+
+            await _brokerSocket.ConnectAsync(endpoint);
+
+            _transport = new VladTransport(_brokerSocket);
+
+            var registerMessage = new MessageEnvelope
+            {
+                MessageType = shared.Enums.MessageType.Register,
+                MessageId = Guid.NewGuid(),
+                SenderId = _id,
+                TimeStamp = DateTime.UtcNow,
+            };
+
+            await MessageProtocol.WriteMessageAsync(
+                _transport,
+                registerMessage
+            );
+
+            MessageEnvelope? response;
+
+            try
+            {
+                response =
+                    await MessageProtocol.ReadMessageAsync(
+                        _transport
+                    );
+            }
+            catch (Exception ex)
+                when (ex is EndOfStreamException
+                    or InvalidDataException)
+            {
+                Console.WriteLine(
+                    $"Registration failed: {ex.Message}"
+                );
+
+                return false;
+            }
+
+            if (response is null)
+            {
+                return false;
+            }
+
+            if (response.MessageType !=
+                shared.Enums.MessageType.Ack)
+            {
+                return false;
+            }
+
+            return true;
         }
-        // the main loop is in the MainThread file
+        public async Task RunAsync()
+        {
+            if (!await RegisterWithBroker())
+            {
+                Console.WriteLine("Failed to register");
+                return;
+            }
+            await ReceiveLoopAsync();
+        }
+        private async Task ReceiveLoopAsync()
+        {
+            while (true)
+            {
+                MessageEnvelope? message =
+                    await MessageProtocol.ReadMessageAsync(_transport!);
+
+                if (message is null)
+                {
+                    Console.WriteLine("Broker disconnected.");
+                    return;
+                }
+
+                //HandleMessage(message);
+            }
+        }
     }
 }
