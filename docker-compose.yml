@@ -1,0 +1,20 @@
+services:
+  broker:
+    build:
+      context: .
+      dockerfile: src/integration-service/Broker/Dockerfile
+    environment:
+      BROKER_BIND_IP: "0.0.0.0"
+      BROKER_BIND_PORT: "6001"
+    ports:
+      - "6001:6001"   # optional, only needed to reach it from outside Docker
+
+  receiver:
+    build:
+      context: .
+      dockerfile: src/consumers/Client/Dockerfile
+    environment:
+      BROKER_HOST: "broker"
+      BROKER_PORT: "6001"
+    depends_on:
+      - broker

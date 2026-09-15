@@ -24,16 +24,8 @@ namespace receivers.S
 
         public async Task<bool> RegisterWithBroker()
         {
-            Console.WriteLine("Give broker ip");
-            IPAddress brokerIp =
-                IPAddress.Parse(Console.ReadLine()!);
-
-            Console.WriteLine("Give broker port");
-            int brokerPort =
-                int.Parse(Console.ReadLine()!);
-
-            var endpoint =
-                new IPEndPoint(brokerIp, brokerPort);
+            string brokerHost = GetBrokerHost();
+            int brokerPort = GetBrokerPort();
 
             _brokerSocket = new Socket(
                 AddressFamily.InterNetwork,
@@ -41,7 +33,13 @@ namespace receivers.S
                 ProtocolType.Tcp
             );
 
-            await _brokerSocket.ConnectAsync(endpoint);
+            _brokerSocket = new Socket(
+                AddressFamily.InterNetwork,
+                SocketType.Stream,
+                ProtocolType.Tcp
+            );
+
+            await _brokerSocket.ConnectAsync(brokerHost, brokerPort);
 
             _transport = new VladTransport(_brokerSocket);
 
@@ -115,6 +113,29 @@ namespace receivers.S
 
                 //HandleMessage(message);
             }
+        }
+        private static string GetBrokerHost()
+        {
+            string? env = Environment.GetEnvironmentVariable("BROKER_HOST");
+            if (!string.IsNullOrWhiteSpace(env))
+            {
+                return env;
+            }
+
+            Console.WriteLine("Give broker ip/host");
+            return Console.ReadLine()!;
+        }
+
+        private static int GetBrokerPort()
+        {
+            string? env = Environment.GetEnvironmentVariable("BROKER_PORT");
+            if (!string.IsNullOrWhiteSpace(env))
+            {
+                return int.Parse(env);
+            }
+
+            Console.WriteLine("Give broker port");
+            return int.Parse(Console.ReadLine()!);
         }
     }
 }
