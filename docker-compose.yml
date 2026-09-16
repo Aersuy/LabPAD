@@ -6,8 +6,11 @@ services:
     environment:
       BROKER_BIND_IP: "0.0.0.0"
       BROKER_BIND_PORT: "6001"
+      BROKER_DB_PATH: "/app/data/broker.db"
     ports:
       - "6001:6001"
+    volumes:
+      - broker-data:/app/data
 
   receiver:
     build:
@@ -25,3 +28,5 @@ services:
     tty: true
     depends_on:
       - broker
+volumes:
+  broker-data:
