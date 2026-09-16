@@ -12,5 +12,6 @@ namespace shared.Models
         public string IpAddress { get; set; } = string.Empty;
         public int Port { get; set; }
         public Roles Role { get; set; } //Sender or receiver
+
     }
 }

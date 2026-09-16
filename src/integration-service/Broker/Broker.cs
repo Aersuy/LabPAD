@@ -162,6 +162,7 @@ namespace Broker
                     {
                         break;
                     }
+                    Console.WriteLine($"Sender {id} sent {msg.MessageType} for subjects: {string.Join(", ", msg.Subject)}");
                     if (msg.MessageType == MessageType.Data)
                     {
                         await DispatchAsync(msg);
@@ -182,6 +183,8 @@ namespace Broker
         {
             List<ReceiverConnection> targets = _receivers.Values
                 .Where(r => r.Subject.Intersect(msg.Subject).Any()).ToList();
+
+            Console.WriteLine($"Dispatching {msg.MessageId} to {targets.Count} receiver(s): {string.Join(", ", targets.Select(t => t.Id))}");
 
             IEnumerable<Task> sendTasks = targets.Select(async r =>
             {

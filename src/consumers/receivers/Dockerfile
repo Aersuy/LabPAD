@@ -8,10 +8,10 @@ WORKDIR /app
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
-COPY ["src/consumers/Client/receivers.csproj", "src/consumers/Client/"]
-RUN dotnet restore "./src/consumers/Client/receivers.csproj"
+COPY ["src/consumers/receivers/receivers.csproj", "src/consumers/receivers/"]
+RUN dotnet restore "./src/consumers/receivers/receivers.csproj"
 COPY . .
-WORKDIR "/src/src/consumers/Client"
+WORKDIR "/src/src/consumers/receivers"
 RUN dotnet build "./receivers.csproj" -c $BUILD_CONFIGURATION -o /app/build
 
 # This stage is used to publish the service project to be copied to the final stage

@@ -18,5 +18,6 @@ namespace shared.Models
         public DateTime TimeStamp { get; set; }
         public List<string> Subject { get; set; } = new List<string>();
         public JsonElement JsonPayload { get; set; }
+        public int Version { get; set; } = 1;
     }
 }

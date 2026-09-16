@@ -7,14 +7,21 @@ services:
       BROKER_BIND_IP: "0.0.0.0"
       BROKER_BIND_PORT: "6001"
     ports:
-      - "6001:6001"   # optional, only needed to reach it from outside Docker
+      - "6001:6001"
 
   receiver:
     build:
       context: .
-      dockerfile: src/consumers/Client/Dockerfile
-    environment:
-      BROKER_HOST: "broker"
-      BROKER_PORT: "6001"
+      dockerfile: src/consumers/receivers/Dockerfile
+    stdin_open: true
+    tty: true
+    depends_on:
+      - broker
+  sender:
+    build:
+      context: .
+      dockerfile: src/order-service/previders/Dockerfile
+    stdin_open: true
+    tty: true
     depends_on:
       - broker
