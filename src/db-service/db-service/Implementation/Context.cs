@@ -1,14 +1,13 @@
-﻿using Broker.Models;
+﻿using db_service.Models;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection.Emit;
 using System.Text;
 using System.Threading.Tasks;
 
-
-
-namespace Broker.Db
+namespace db_service.Implementation
 {
     public class BrokerDbContext : DbContext
     {

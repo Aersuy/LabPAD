@@ -1,5 +1,4 @@
-﻿using Broker.Db;
-using Broker.Models;
+﻿using db_service.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using shared;
 using shared.Enums;
@@ -18,7 +17,7 @@ namespace Broker
         private readonly IPAddress _ip;
         private readonly int _port;
         private Socket? _listenerSocket;
-        private IMessageRepository _messageRepository;
+        private IMessageService _messageService;
 
 
         private static readonly JsonSerializerOptions JsonOptions = new()
@@ -28,11 +27,11 @@ namespace Broker
 
         private readonly ConcurrentDictionary<Guid, ReceiverConnection> _receivers = new();
 
-        public Broker(IPAddress ip, int port, IMessageRepository messageRepository)
+        public Broker(IPAddress ip, int port, IMessageService messageService)
         {
             _ip = ip;
             _port = port;
-            _messageRepository = messageRepository;
+            _messageService = messageService;
         }
         public void Start()
         {
@@ -172,7 +171,7 @@ namespace Broker
                     Console.WriteLine($"Sender {id} sent {msg.MessageType} for subjects: {string.Join(", ", msg.Subject)}");
                     if (msg.MessageType == MessageType.Data)
                     {
-                        await _messageRepository.StoreMessageAsync(msg);
+                        await _messageService.StoreMessageAsync(msg);
                         await DispatchAsync(msg);
                     }
                 }

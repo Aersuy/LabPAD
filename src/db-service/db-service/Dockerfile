@@ -10,18 +10,19 @@ WORKDIR /app
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
-COPY ["src/order-service/previders/providers.csproj", "src/order-service/previders/"]
-RUN dotnet restore "./src/order-service/previders/providers.csproj"
+COPY ["src/db-service/db-service/db-service.csproj", "src/db-service/db-service/"]
+RUN dotnet restore "./src/db-service/db-service/db-service.csproj"
 COPY . .
-WORKDIR "/src/src/order-service/previders"
-RUN dotnet build "./providers.csproj" -c $BUILD_CONFIGURATION -o /app/build
+WORKDIR "/src/src/db-service/db-service"
+RUN dotnet build "./db-service.csproj" -c $BUILD_CONFIGURATION -o /app/build
+
 # This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./providers.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "./db-service.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-ENTRYPOINT ["dotnet", "providers.dll"]
+ENTRYPOINT ["dotnet", "db-service.dll"]

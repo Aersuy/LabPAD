@@ -1,5 +1,4 @@
-﻿using Broker;
-using Broker.Db;
+﻿using db_service.Implementation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net;
@@ -10,13 +9,13 @@ string dbPath = Environment.GetEnvironmentVariable("BROKER_DB_PATH") ?? "broker.
 
 var services = new ServiceCollection();
 services.AddDbContextFactory<BrokerDbContext>(options => options.UseSqlite($"Data Source={dbPath}"));
-services.AddSingleton<IMessageRepository, MessageRepository>();
+services.AddSingleton<MessageService>();
 
 await using ServiceProvider provider = services.BuildServiceProvider();
-var messageRepository = provider.GetRequiredService<IMessageRepository>();
-await messageRepository.EnsureCreatedAsync();
+var messageService = provider.GetRequiredService<MessageService>();
+await messageService.EnsureCreatedAsync();
 
-var broker = new Broker.Broker(ip, port, messageRepository);
+var broker = new Broker.Broker(ip, port, messageService);
 broker.Start();
 await broker.RunAsync();
 

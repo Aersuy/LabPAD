@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Broker.Models
+namespace db_service.Models
 {
     public class SubjectDbModel
     {
