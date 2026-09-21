@@ -9,10 +9,10 @@ string dbPath = Environment.GetEnvironmentVariable("BROKER_DB_PATH") ?? "broker.
 
 var services = new ServiceCollection();
 services.AddDbContextFactory<BrokerDbContext>(options => options.UseSqlite($"Data Source={dbPath}"));
-services.AddSingleton<MessageService>();
+services.AddSingleton<MessageService2>();
 
 await using ServiceProvider provider = services.BuildServiceProvider();
-var messageService = provider.GetRequiredService<MessageService>();
+var messageService = provider.GetRequiredService<MessageService2>();
 await messageService.EnsureCreatedAsync();
 
 var broker = new Broker.Broker(ip, port, messageService);

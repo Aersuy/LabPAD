@@ -15,10 +15,17 @@ namespace receivers.Implementation
 
         public void Handle(MessageEnvelope message)
         {
-            DataPayload? payload = message.JsonPayload.Deserialize<DataPayload>();
+            DataPayload? payload;
+            try { payload = message.JsonPayload.Deserialize<DataPayload>(); }
+            catch (JsonException ex) { throw new PermanentFailureException("Payload not right",ex); }
+
+            if (payload is null)
+            {
+                throw new PermanentFailureException("Empty payload");
+            }
             Console.WriteLine(
-                $"[{message.TimeStamp:HH:mm:ss}] (v{message.Version}) Data from {message.SenderId} on [{string.Join(", ", message.Subject)}]: {payload?.Content}"
-            );
+              $"[{message.TimeStamp:HH:mm:ss}] (v{message.Version})" +
+              $"Data from {message.SenderId} on [{string.Join(", ", message.Subject)}]: {payload.Content}");
         }
     }
 }

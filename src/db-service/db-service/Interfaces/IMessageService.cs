@@ -9,8 +9,13 @@ namespace db_service.Interfaces
 {
     public interface IMessageService
     {
+        //
+        Task<bool> StoreMessageIfNewAsync(MessageEnvelope message);
+
         Task EnsureCreatedAsync();
         Task StoreMessageAsync(MessageEnvelope message);
         Task<List<MessageEnvelope>> GetMessagesBySubjectsAsync(IEnumerable<string> subjects);
+        Task<bool> MessageExistsAsync(Guid messageId);
+        
     }
 }

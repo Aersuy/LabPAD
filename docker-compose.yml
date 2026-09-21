@@ -23,7 +23,7 @@ services:
   sender:
     build:
       context: .
-      dockerfile: src\providers\providers\providers.csproj
+      dockerfile: src/providers/providers/Dockerfile
     stdin_open: true
     tty: true
     depends_on:

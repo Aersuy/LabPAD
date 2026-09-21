@@ -6,6 +6,7 @@ using shared.IImplementations;
 using shared.Interfaces;
 using shared.Models;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -17,7 +18,7 @@ namespace Broker
         private readonly IPAddress _ip;
         private readonly int _port;
         private Socket? _listenerSocket;
-        private IMessageService _messageService;
+        private IMessageService2 _messageService;
 
 
         private static readonly JsonSerializerOptions JsonOptions = new()
@@ -27,7 +28,7 @@ namespace Broker
 
         private readonly ConcurrentDictionary<Guid, ReceiverConnection> _receivers = new();
 
-        public Broker(IPAddress ip, int port, IMessageService messageService)
+        public Broker(IPAddress ip, int port, IMessageService2 messageService)
         {
             _ip = ip;
             _port = port;
@@ -43,6 +44,7 @@ namespace Broker
         }
         public async Task RunAsync()
         {
+            _ = DispatcherLoopAsync();
             while (true)
             {
                 Socket clientSocket = await _listenerSocket!.AcceptAsync();
@@ -142,7 +144,7 @@ namespace Broker
                     {
                         break;
                     }
-                    
+                    await HandleReceiverMessageAsync(id, msg);
                 }
             }
             catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
@@ -151,11 +153,68 @@ namespace Broker
             }
             finally
             {
-                _receivers.TryRemove(id, out _);
+                // Old version, remove the receiver from the dictionary and close the transport
+                // Just removes th item with the id, connection doesn't matter
+                //_receivers.TryRemove(id, out _);
+
+
+                // Remove the reicever only if the connection matches, to avoid removing a new connection with the same id
+                // Can't just check if the connection is the same because of atomicity, so we check and remove in one operation
+                _receivers.TryRemove(new KeyValuePair<Guid, ReceiverConnection>(id, connection));
                 transport.close();
                 Console.WriteLine($"Receiver {id} disconnected.");
             }
         }
+
+        private async Task HandleReceiverMessageAsync(Guid receiverId, MessageEnvelope msg)
+        {
+            try
+            {
+                switch(msg.MessageType)
+                {
+                    case MessageType.Ack:
+                        var ack = msg.JsonPayload.Deserialize<AckPayload>(JsonOptions);
+                        if (ack is null)
+                        {
+                            break;
+                        }
+                        Console.WriteLine($"Receiver {receiverId} ACKed {ack.MessageAcknowledged}");
+                        await _messageService.MarkAckedAsync(ack.MessageAcknowledged, receiverId);
+                        break;
+                    case MessageType.Nack:
+                        var nack = msg.JsonPayload.Deserialize<NackPayload>(JsonOptions);
+                        if(nack is null)
+                        {
+                            break;
+                        }
+                        Console.WriteLine($"Receiver {receiverId} NACKed {nack.MessageNacked} with reason: {nack.Reason}, retryable: {nack.Retryable}");
+                        if (nack.Retryable)
+                        {
+                            await _messageService.MarkRetryLaterAsync(nack.MessageNacked, receiverId,nack.Reason,DateTime.UtcNow + TimeSpan.FromSeconds(5));
+                        } else
+                        {
+                            await _messageService.MarkDeadLetterAsync(nack.MessageNacked, receiverId, nack.Reason);
+                        }
+                        break;
+                    default:
+                        Console.WriteLine($"Receiver {receiverId} sent unrecognized message type: {msg.MessageType}");
+                        break;
+                }
+            } 
+            catch (JsonException ex)
+            {
+                Console.WriteLine($"Failed to deserialize message from receiver {receiverId}: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                
+                Console.WriteLine($"Failed to record {msg.MessageType} from receiver {receiverId}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        // Handles the sender connection, checks for new messages,
+        // stores them if they are new, sends an acknowledgment back to the sender even if
+        // the message is a duplicate, dispatches to all receivers that are subscribed
         private async Task HandleSenderAsync(Guid id, ITransport transport)
         {
             Console.WriteLine($"Sender {id} registered");
@@ -171,8 +230,21 @@ namespace Broker
                     Console.WriteLine($"Sender {id} sent {msg.MessageType} for subjects: {string.Join(", ", msg.Subject)}");
                     if (msg.MessageType == MessageType.Data)
                     {
-                        await _messageService.StoreMessageAsync(msg);
-                        await DispatchAsync(msg);
+                        var targetIds = GetReceiverIdsForSubjects(msg);
+
+                        bool isNew;
+                        try
+                        {
+                            isNew = await _messageService.StoreMessageIfNewAsync(msg, targetIds);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Store failed for {msg.MessageId}: {ex.Message}");
+                            continue;     // Skip sending ack if store fails
+                        }
+
+                        Console.WriteLine($"Message {msg.MessageId}: {(isNew ? "stored" : "duplicate")}, {targetIds.Count} target receiver(s)");
+                        await SendAckAsync(transport, id, msg.MessageId);
                     }
                 }
 
@@ -186,26 +258,61 @@ namespace Broker
                 Console.WriteLine($"Sender {id} disconnected");
             }
         }
-        private async Task DispatchAsync(MessageEnvelope msg)
+        private IReadOnlyCollection<Guid> GetReceiverIdsForSubjects(MessageEnvelope msg) =>
+         _receivers.Values
+        .Where(r => r.Subject.Intersect(msg.Subject).Any())
+        .Select(r => r.Id)
+        .ToList();
+      
+        private const int MaxAttempts = 5;
+        private static readonly TimeSpan AckTimeout = TimeSpan.FromSeconds(5);
+
+        private async Task DispatcherLoopAsync()
         {
-            List<ReceiverConnection> targets = _receivers.Values
-                .Where(r => r.Subject.Intersect(msg.Subject).Any()).ToList();
-
-            Console.WriteLine($"Dispatching {msg.MessageId} to {targets.Count} receiver(s): {string.Join(", ", targets.Select(t => t.Id))}");
-
-            IEnumerable<Task> sendTasks = targets.Select(async r =>
+            while (true)
             {
                 try
                 {
-                    await MessageProtocol.WriteMessageAsync(r.Transport, msg);
+                    var deliveries = await _messageService.GetDueDeliveriesAsync(
+                        DateTime.UtcNow, _receivers.Keys.ToArray(), 10);
+
+                    foreach (var delivery in deliveries)
+                    {
+                        if (delivery.Attempts >= MaxAttempts)
+                        {
+                            await _messageService.MarkDeadLetterAsync(delivery.MessageId, delivery.ReceiverId, "Max attempts reached");
+                            Console.WriteLine($"Dead-lettered {delivery.MessageId} for {delivery.ReceiverId}: max attempts");
+                            continue;
+                        }
+
+                        if (!_receivers.TryGetValue(delivery.ReceiverId, out var receiver))
+                            continue;                       
+
+                        var envelope = await _messageService.LoadEnvelopeAsync(delivery.MessageId);
+                        if (envelope is null)
+                            continue;
+
+                        await _messageService.RecordAttemptAsync(
+                            delivery.MessageId, delivery.ReceiverId, DateTime.UtcNow + AckTimeout);
+
+                        try
+                        {
+                            await MessageProtocol.WriteMessageAsync(receiver.Transport, envelope);
+                            Console.WriteLine($"Sent {envelope.MessageId} to {delivery.ReceiverId} (attempt {delivery.Attempts + 1})");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Send to {delivery.ReceiverId} failed: {ex.Message}");
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to deliver to receiver {r.Id}: {ex.Message}");
-                    _receivers.TryRemove(r.Id, out _);
+                    Console.WriteLine($"Dispatcher error: {ex.GetType().Name}: {ex.Message}");
                 }
-            });
-            await Task.WhenAll(sendTasks);
+
+                await Task.Delay(500);
+            }
         }
     }
     internal sealed class ReceiverConnection

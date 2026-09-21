@@ -14,5 +14,6 @@ namespace shared.Enums
         Data,
         Error,
         Ack,
+        Nack,
     }
 }

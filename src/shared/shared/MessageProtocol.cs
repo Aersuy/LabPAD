@@ -19,14 +19,21 @@ namespace shared
         {
             Converters = { new JsonStringEnumConverter() }
         };
-
         public static async Task WriteMessageAsync(ITransport stream, MessageEnvelope msg)
         {
-            byte[] payload = JsonSerializer.SerializeToUtf8Bytes(msg, JsonOptions);
-            byte[] lengthPrefix = BitConverter.GetBytes(payload.Length);
+            // Old way, not really thread safe, multiple threads writing to the same stream can cause issues
+            //byte[] payload = JsonSerializer.SerializeToUtf8Bytes(msg, JsonOptions);
+            //byte[] lengthPrefix = BitConverter.GetBytes(payload.Length);
 
-            await stream.sendAsync(lengthPrefix);
-            await stream.sendAsync(payload);
+            //await stream.sendAsync(lengthPrefix);
+            //await stream.sendAsync(payload);
+
+            // new way, uses a single buffer to avoid multiple writes and potential thread safety issues
+            byte[] payload = JsonSerializer.SerializeToUtf8Bytes(msg, JsonOptions);
+            byte[] frame = new byte[4 + payload.Length];
+            BitConverter.TryWriteBytes(frame.AsSpan(0, 4), payload.Length);
+            payload.CopyTo(frame.AsSpan(4));
+            await stream.sendAsync(frame);
         }
         public static async Task<MessageEnvelope?> ReadMessageAsync(ITransport stream)
         {

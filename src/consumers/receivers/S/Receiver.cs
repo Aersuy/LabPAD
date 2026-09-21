@@ -7,6 +7,7 @@ using shared.Interfaces;
 using shared.Models;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading.Tasks;
 
 namespace receivers.S
 {
@@ -23,9 +24,6 @@ namespace receivers.S
 
         public void Start()
         {
-            //_listenerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            //_listenerSocket.Bind(new IPEndPoint(TestIp, TestPort));
-            //_listenerSocket.Listen();
             _id = Guid.NewGuid();
         }
        
@@ -112,7 +110,6 @@ namespace receivers.S
         }
         public async Task RunAsync()
         {
-
             if (!await RegisterWithBroker())
             {
                 Console.WriteLine("Failed to register");
@@ -129,8 +126,9 @@ namespace receivers.S
                 MessageEnvelope? message;
                 try
                 {
-                 message = await MessageProtocol.ReadMessageAsync(_transport!);
-                } catch (Exception ex)
+                    message = await MessageProtocol.ReadMessageAsync(_transport!);
+                }
+                catch (Exception ex)
                 {
                     Console.WriteLine($"ReceiveLoopAsync threw: {ex.GetType().Name}: {ex.Message}");
                     Console.WriteLine(ex.StackTrace);
@@ -142,21 +140,22 @@ namespace receivers.S
                     return;
                 }
                 Console.WriteLine($"Received message: type={message.MessageType} id={message.MessageId}");
-                HandleMessage(message);
+                try
+                {
+                    await HandleMessageAsync(message);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"HandleMessage threw: {ex.GetType().Name}: {ex.Message}");
+                    Console.WriteLine(ex.StackTrace);
+                }
             }
         }
-        private void HandleMessage(MessageEnvelope message)
+        private async Task HandleMessageAsync(MessageEnvelope message)
         {
             if (message.MessageType == shared.Enums.MessageType.Data)
             {
-                if (_dataHandlers.TryGetValue(message.Version,out IDataHandler? handler))
-                {
-                    handler.Handle(message);
-                }
-                else
-                {
-                    Console.WriteLine($"No handler registered for Data message version {message.Version}");
-                }
+                await HandleDataAsync(message);
                 return;
             }
             switch (message.MessageType)
@@ -176,6 +175,28 @@ namespace receivers.S
                     break;
             }
         }
+        private async Task HandleDataAsync(MessageEnvelope message)
+        {
+            // if the there is no handler for this message version send nack with no retry
+            if(!_dataHandlers.TryGetValue(message.Version, out IDataHandler? handler))
+            {
+                await SendNackAsync(message, $"No handler for version {message.Version}", false);
+                return;
+            }
+            try
+            {
+                handler.Handle(message);
+            } catch (PermanentFailureException ex)
+            {
+                await SendNackAsync(message, ex.Message, false);
+                return;
+            } catch (Exception ex)
+            {
+                await SendNackAsync(message, ex.Message, true);
+                return;
+            }
+            await SendAckAsync(message);
+        }
         private static string GetBrokerHost()
         {
             Console.WriteLine("Give broker ip/host");
@@ -186,6 +207,24 @@ namespace receivers.S
         {
             Console.WriteLine("Give broker port");
             return int.Parse(Console.ReadLine()!);
+        }
+
+        private Task SendAckAsync(MessageEnvelope original) =>
+          SendControlAsync(MessageType.Ack, new AckPayload { MessageAcknowledged = original.MessageId });
+        private Task SendNackAsync(MessageEnvelope original, string reason,bool retryable) =>
+          SendControlAsync(MessageType.Nack, new NackPayload { MessageNacked = original.MessageId, Reason = reason, Retryable = retryable });
+        private Task SendControlAsync<T>(MessageType type, T payload)
+        {
+            var message = new MessageEnvelope
+            {
+                MessageType = type,
+                MessageId = Guid.NewGuid(),
+                SenderId = _id,
+                TimeStamp = DateTime.UtcNow,
+                JsonPayload = System.Text.Json.JsonSerializer.SerializeToElement(payload),
+                Subject = new List<string>()
+            };
+            return MessageProtocol.WriteMessageAsync(_transport!, message);
         }
     }
 }

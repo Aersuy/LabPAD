@@ -71,7 +71,32 @@ namespace db_service.Implementation
 
             return stored.Select(ToEnvelope).ToList();
         }
+        public async Task<bool> MessageExistsAsync(Guid messageId)
+        {
+            await using var db = await _contextFactory.CreateDbContextAsync();
+            return await db.Messages.AnyAsync(m => m.Id == messageId);
+        }
 
+        // Store message if it is new return false if it already exists, otherwise return true
+        // The reason to store the message first is that we make the db do the uniqueness check for us
+        // If the message already exists, we get the DbUpdate exception and check if the message exists
+        // this solves the issue of race conditions where 2 messages with the same id  are being stored at the same time
+        // if we check whether the message exists first, the other message could be stored in between the check and the store
+        // causing issues
+        public async Task<bool> StoreMessageIfNewAsync(MessageEnvelope message)
+        {
+            try
+            {
+                await StoreMessageAsync(message);
+                return true;                                   
+            }
+            catch (DbUpdateException)
+            {
+                if (await MessageExistsAsync(message.MessageId))
+                    return false;                            
+                throw;                                         
+            }
+        }
         private static MessageEnvelope ToEnvelope(MessageDbModel stored)
         {
             using JsonDocument doc = JsonDocument.Parse(stored.JsonPayload);
