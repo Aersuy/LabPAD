@@ -88,7 +88,7 @@ namespace db_service.Implementation
         /// <summary>
         /// IDEMPOTENT
         /// ATOMIC
-        /// ONLY WORKS WHEN STATUS IS PENDING
+        /// Does not work when acked
         /// </summary>
         /// <param name="messageId"></param>
         /// <param name="receiverID"></param>
@@ -96,7 +96,7 @@ namespace db_service.Implementation
         public async Task<int> MarkAckedAsync(Guid messageId, Guid receiverID)
         {
             await using var db = await _contextFactory.CreateDbContextAsync();
-            return await db.Deliveries.Where(d => d.MessageId == messageId && d.ReceiverId == receiverID && d.Status == DeliveryStatus.Pending)
+            return await db.Deliveries.Where(d => d.MessageId == messageId && d.ReceiverId == receiverID && (d.Status == DeliveryStatus.Pending || d.Status == DeliveryStatus.DeadLettered))
                 .ExecuteUpdateAsync(d => d.SetProperty(delivery => delivery.Status, DeliveryStatus.Acked)
                 .SetProperty(d => d.LastError, string.Empty));
         }

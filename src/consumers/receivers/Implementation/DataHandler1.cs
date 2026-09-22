@@ -13,7 +13,7 @@ namespace receivers.Implementation
     {
         public int version => 1;
 
-        public void Handle(MessageEnvelope message)
+        public string Handle(MessageEnvelope message)
         {
             DataPayload? payload;
             try { payload = message.JsonPayload.Deserialize<DataPayload>(); }
@@ -23,9 +23,9 @@ namespace receivers.Implementation
             {
                 throw new PermanentFailureException("Empty payload");
             }
-            Console.WriteLine(
-              $"[{message.TimeStamp:HH:mm:ss}] (v{message.Version})" +
-              $"Data from {message.SenderId} on [{string.Join(", ", message.Subject)}]: {payload.Content}");
+            if (payload.Content is null)
+                throw new PermanentFailureException("Content is null");
+            return payload.Content;
         }
     }
 }

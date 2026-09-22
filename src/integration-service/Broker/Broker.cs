@@ -108,7 +108,7 @@ namespace Broker
             var msg = new MessageEnvelope
             { 
                 MessageType = MessageType.Error,
-                MessageId = Guid.NewGuid(),
+                MessageId = Guid.CreateVersion7(),
                 TimeStamp = DateTime.UtcNow,
                 Subject = subject,
                 JsonPayload = payload

@@ -17,14 +17,16 @@ namespace receivers.S
         private Socket? _brokerSocket;
         private ITransport? _transport;
         private Guid _id;
+        private readonly IEffectStore _effectStore = new EffectStore(GetEffectsPath());
         private readonly Dictionary<int, IDataHandler> _dataHandlers = new()
         {
             [1] = new DataHandler1(),
-        };  
-
+        };
+        private static string GetEffectsPath() =>
+          Environment.GetEnvironmentVariable("RECEIVER_EFFECTS_PATH") ?? "effects.log";
         public void Start()
         {
-            _id = Guid.NewGuid();
+            _id = Guid.CreateVersion7();
         }
        
         private List<string> GetSubjects()
@@ -62,7 +64,7 @@ namespace receivers.S
             var registerMessage = new MessageEnvelope
             {
                 MessageType = shared.Enums.MessageType.Register,
-                MessageId = Guid.NewGuid(),
+                MessageId = Guid.CreateVersion7(),
                 SenderId = _id,
                 TimeStamp = DateTime.UtcNow,
                 JsonPayload = System.Text.Json.JsonSerializer.SerializeToElement(payload),
@@ -122,7 +124,6 @@ namespace receivers.S
             Console.WriteLine("Entering receive loop.");
             while (true)
             {
-                Console.WriteLine("Waiting for next message from broker...");
                 MessageEnvelope? message;
                 try
                 {
@@ -139,7 +140,6 @@ namespace receivers.S
                     Console.WriteLine("Broker disconnected. (ReadMessageAsync returned null / 0 bytes read).");
                     return;
                 }
-                Console.WriteLine($"Received message: type={message.MessageType} id={message.MessageId}");
                 try
                 {
                     await HandleMessageAsync(message);
@@ -185,7 +185,17 @@ namespace receivers.S
             }
             try
             {
-                handler.Handle(message);
+               string content = handler.Handle(message);
+               bool applied = _effectStore.ApplyOnce(message.MessageId,content);
+                if (!applied)
+                {
+                    //Console.WriteLine($"Duplicate {message.MessageId}, effect skipped");
+                }
+                else
+                {
+                    Console.WriteLine($"[{message.TimeStamp:HH:mm:ss}] (v{message.Version}) applied {message.MessageId}: {content}");
+                    Console.WriteLine("Waiting for next message");
+                }
             } catch (PermanentFailureException ex)
             {
                 await SendNackAsync(message, ex.Message, false);
@@ -218,7 +228,7 @@ namespace receivers.S
             var message = new MessageEnvelope
             {
                 MessageType = type,
-                MessageId = Guid.NewGuid(),
+                MessageId = Guid.CreateVersion7(),
                 SenderId = _id,
                 TimeStamp = DateTime.UtcNow,
                 JsonPayload = System.Text.Json.JsonSerializer.SerializeToElement(payload),

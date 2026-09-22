@@ -20,6 +20,10 @@ services:
     tty: true
     depends_on:
       - broker
+    environment:
+    - RECEIVER_EFFECTS_PATH=/data/effects.log
+    volumes:
+    - receiver-data:/data
   sender:
     build:
       context: .
@@ -30,3 +34,4 @@ services:
       - broker
 volumes:
   broker-data:
+  receiver-data:  

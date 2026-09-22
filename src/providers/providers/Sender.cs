@@ -4,6 +4,7 @@ using shared.IImplementations;
 using shared.Interfaces;
 using shared.Models;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
@@ -18,7 +19,8 @@ namespace providers
     {
         private Socket? _socket;
         private ITransport? _transport;
-        private readonly Guid _id = Guid.NewGuid();
+        private readonly Guid _id = Guid.CreateVersion7();
+        private readonly ConcurrentDictionary<Guid, TaskCompletionSource> _pendingAcks = new();
 
         private static readonly JsonSerializerOptions JsonOption = new()
         {
@@ -47,7 +49,7 @@ namespace providers
                 MessageType = MessageType.Register,
                 JsonPayload = JsonSerializer.SerializeToElement(payload, JsonOption),
                 SenderId = _id,
-                MessageId = Guid.NewGuid(),
+                MessageId = Guid.CreateVersion7(),
                 TimeStamp = DateTime.UtcNow,
             };
             await MessageProtocol.WriteMessageAsync(_transport, registerMessage);
@@ -62,7 +64,7 @@ namespace providers
                 Console.WriteLine($"Registration failed: {ex.Message}");
                 return false;
             }
-            if (response is null || response.MessageType != MessageType.Ack)
+            if (response is null)
             {
                 return false;
             }
@@ -72,7 +74,10 @@ namespace providers
                 Console.WriteLine($"Broker rejected registration: {reason} - {response.JsonPayload.GetRawText()}");
                 return false;
             }
-
+            if (response.MessageType != MessageType.Ack)
+            {
+                return false;
+            }
             return true;
         }
 
@@ -83,7 +88,79 @@ namespace providers
                 Console.WriteLine("Failed to register");
                 return;
             }
+            _ = ReceiveLoopAsync();
             await SendLoopAsync();
+        }
+        // receives acks from the broker
+        // if the messageId from the ack matches with the broker
+        // we get a reference to tcs and set it to completed
+        public async Task ReceiveLoopAsync()
+        {
+            while (true)
+            {
+                MessageEnvelope? message;
+                try
+                {
+                    message = await MessageProtocol.ReadMessageAsync(_transport!);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ReceiveLoopAsync threw: {ex.GetType().Name}: {ex.Message}");
+                    return;
+                }
+                if (message is null)
+                {
+                    Console.WriteLine("Broker disconnected.");
+                    return;
+                }
+                try
+                {
+                    var ack = message.JsonPayload.Deserialize<AckPayload>(JsonOption);
+                    if (ack is not null && _pendingAcks.TryGetValue(ack.MessageAcknowledged, out var tcs))
+                    {
+                        tcs.TrySetResult();
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    Console.WriteLine($"Failed to deserialize Ack from broker: {ex.Message}");
+                }
+            }
+        }
+        private const int MaxPublishAttempts = 5;
+        private static readonly TimeSpan AckWaitTimeout = TimeSpan.FromSeconds(5);
+        // sends the message and waits for ack, if the reference to the
+        // task in the _pendingAcks buffer is set to finished
+        // the program understands it worked
+        private async Task<bool> PublishAsync(MessageEnvelope message)
+        {
+            for (int attempt = 0; attempt < MaxPublishAttempts; attempt++)
+            {
+                var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _pendingAcks[message.MessageId] = tcs;
+
+                try
+                {
+                    await MessageProtocol.WriteMessageAsync(_transport!, message);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Send failed (attempt {attempt}): {ex.Message}");
+                    _pendingAcks.TryRemove(message.MessageId, out _);
+                    await Task.Delay(TimeSpan.FromSeconds(1));
+                    continue;
+                }
+                var winner = await Task.WhenAny(tcs.Task, Task.Delay(AckWaitTimeout));
+                _pendingAcks.TryRemove(message.MessageId, out _);
+                if (winner == tcs.Task)
+                {
+                    Console.WriteLine($"Message {message.MessageId} acknowledged (attempt {attempt}).");
+                    return true;
+                }
+                Console.WriteLine($"No ACK for {message.MessageId} within {AckWaitTimeout.TotalSeconds}s");
+            }
+            Console.WriteLine($"Giving up on {message.MessageId} after {MaxPublishAttempts} attempts");
+            return false;
         }
         public async Task SendLoopAsync()
         {
@@ -98,11 +175,11 @@ namespace providers
                     MessageType = MessageType.Data,
                     JsonPayload = JsonSerializer.SerializeToElement(payload, JsonOption),
                     SenderId = _id,
-                    MessageId = Guid.NewGuid(),
+                    MessageId = Guid.CreateVersion7(),
                     TimeStamp = DateTime.UtcNow,
                     Subject = subjects
                 };
-                await MessageProtocol.WriteMessageAsync(_transport, message);
+                await PublishAsync(message);
 
                 Console.WriteLine("Send another message? (y/n)");
 
@@ -113,8 +190,6 @@ namespace providers
                 }
             }
         }
-
-
         private static string GetBrokerHost()
         {
             Console.WriteLine("Give broker ip/host");
