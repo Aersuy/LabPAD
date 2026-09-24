@@ -68,22 +68,32 @@ namespace db_service.Implementation
         }
         public async Task<bool> StoreMessageIfNewAsync(MessageEnvelope message, IReadOnlyCollection<Guid> receiverIds)
         {
-            await using var db = await _contextFactory.CreateDbContextAsync();
-            await AddMessageAsync(db, message);
-            AddDelivery(db, message.MessageId, receiverIds);
-            try
+            const int maxAttempts = 3;
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                await db.SaveChangesAsync();
-                return true;
-            }
-            catch (DbUpdateException)
-            {
-                if (await MessageExistsAsync(message.MessageId))
+                await using var db = await _contextFactory.CreateDbContextAsync();
+                await AddMessageAsync(db, message);
+                AddDelivery(db, message.MessageId, receiverIds);
+                try
                 {
-                    return false;
+                    await db.SaveChangesAsync();
+                    return true;
                 }
-                throw;
+                catch (DbUpdateException)
+                {
+                    if (await MessageExistsAsync(message.MessageId))
+                    {
+                        return false;
+                    }
+                    // If we reach here, the message does not exist
+                    // some issue accoured while saving, we can retry
+                    if (attempt == maxAttempts)
+                    {
+                        throw;
+                    }
+                }
             }
+            return false;
         }
         /// <summary>
         /// IDEMPOTENT

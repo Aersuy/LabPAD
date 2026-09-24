@@ -17,15 +17,15 @@ namespace shared.IImplementations
             _socket = socket;
         }
         // need to write comment
-        public async Task<int> sendAsync(ReadOnlyMemory<byte> data)
+        public async Task<int> sendAsync(ReadOnlyMemory<byte> data, CancellationToken ct = default)
         {
-            await _sendLock.WaitAsync();
+            await _sendLock.WaitAsync(ct);
             try
             {
                 int total = 0;
                 while(total < data.Length)
                 {
-                    total += await _socket.SendAsync(data.Slice(total), SocketFlags.None);
+                    total += await _socket.SendAsync(data.Slice(total), SocketFlags.None,ct);
                 }
                 return total;
             }
@@ -34,9 +34,9 @@ namespace shared.IImplementations
                 _sendLock.Release();
             }
         }
-        public async Task<int> receiveAsync(Memory<byte> buffer)
+        public async Task<int> receiveAsync(Memory<byte> buffer, CancellationToken ct = default)
         {
-            return await _socket.ReceiveAsync(buffer,SocketFlags.None);
+            return await _socket.ReceiveAsync(buffer,SocketFlags.None,ct);
         }
         public void close()
         {

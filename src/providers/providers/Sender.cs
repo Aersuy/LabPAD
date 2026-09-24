@@ -2,6 +2,7 @@
 using shared.Enums;
 using shared.IImplementations;
 using shared.Interfaces;
+using shared.Logging;
 using shared.Models;
 using System;
 using System.Collections.Concurrent;
@@ -21,6 +22,12 @@ namespace providers
         private ITransport? _transport;
         private readonly Guid _id = Guid.CreateVersion7();
         private readonly ConcurrentDictionary<Guid, TaskCompletionSource> _pendingAcks = new();
+        private readonly FileLogger _logger;
+
+        public Sender(FileLogger logger)
+        {
+            _logger = logger;
+        }
 
         private static readonly JsonSerializerOptions JsonOption = new()
         {
@@ -61,7 +68,7 @@ namespace providers
             }
             catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
             {
-                Console.WriteLine($"Registration failed: {ex.Message}");
+                _logger.Log("Sender","Warning", $"Registration failed: {ex.Message}");
                 return false;
             }
             if (response is null)
@@ -71,7 +78,7 @@ namespace providers
             if (response.MessageType == MessageType.Error)
             {
                 string reason = response.Subject.Count > 0 ? response.Subject[0] : "Unknown";
-                Console.WriteLine($"Broker rejected registration: {reason} - {response.JsonPayload.GetRawText()}");
+                _logger.Log("Sender", "Warning", $"Broker rejected registration: {reason} - {response.JsonPayload.GetRawText()}");
                 return false;
             }
             if (response.MessageType != MessageType.Ack)
@@ -80,15 +87,40 @@ namespace providers
             }
             return true;
         }
+        private volatile bool _connected;
+        private readonly SemaphoreSlim _reconnectLock = new(1, 1);
+        private async Task<bool> EnsureConnectedAsync()
+        {
+            if (_connected) return true;
+            await _reconnectLock.WaitAsync();   
+            try
+            {
+                if (_connected) return true;
+                _socket?.Close();
+                while (true)
+                {
+                    if (await RegisterWithBroker())
+                    {
+                        _connected = true;
+                        _ = ReceiveLoopAsync();
+                        return true;
+                    }
+                    _logger.Log("Sender", "Warning", "Reconnect failed,retry");
+                    await Task.Delay(TimeSpan.FromSeconds(3));
 
+                }
+            } finally
+            {
+                _reconnectLock.Release();
+            }
+        }
         public async Task RunAsync()
         {
-            if (!await RegisterWithBroker())
+            if (!await EnsureConnectedAsync())
             {
-                Console.WriteLine("Failed to register");
+                _logger.Log("Sender", "Error", "Failed to register");
                 return;
             }
-            _ = ReceiveLoopAsync();
             await SendLoopAsync();
         }
         // receives acks from the broker
@@ -105,13 +137,13 @@ namespace providers
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"ReceiveLoopAsync threw: {ex.GetType().Name}: {ex.Message}");
-                    return;
+                    _logger.Log("Sender", "Warning", $"ReceiveLoopAsync threw: {ex.GetType().Name}: {ex.Message}");
+                    break;
                 }
                 if (message is null)
                 {
-                    Console.WriteLine("Broker disconnected.");
-                    return;
+                    _logger.Log("Sender", "Warning", "Broker disconnected.");
+                    break;
                 }
                 try
                 {
@@ -123,8 +155,13 @@ namespace providers
                 }
                 catch (JsonException ex)
                 {
-                    Console.WriteLine($"Failed to deserialize Ack from broker: {ex.Message}");
+                    _logger.Log("Sender", "Warning", $"Failed to deserialize Ack from broker: {ex.Message}");
                 }
+            }
+            _connected = false;
+            foreach (var kvp in _pendingAcks)
+            {
+                kvp.Value.TrySetCanceled();
             }
         }
         private const int MaxPublishAttempts = 5;
@@ -136,6 +173,12 @@ namespace providers
         {
             for (int attempt = 0; attempt < MaxPublishAttempts; attempt++)
             {
+                if (!await EnsureConnectedAsync())
+                {
+                    _logger.Log("Sender", "Warning", "Failed to ensure connection before publish.");
+                    return false;
+                }
+
                 var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 _pendingAcks[message.MessageId] = tcs;
 
@@ -145,21 +188,23 @@ namespace providers
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Send failed (attempt {attempt}): {ex.Message}");
+                    _logger.Log("Sender","Warning", $"Send failed (attempt {attempt}): {ex.Message}");
                     _pendingAcks.TryRemove(message.MessageId, out _);
+                    _connected = false;
                     await Task.Delay(TimeSpan.FromSeconds(1));
                     continue;
                 }
                 var winner = await Task.WhenAny(tcs.Task, Task.Delay(AckWaitTimeout));
                 _pendingAcks.TryRemove(message.MessageId, out _);
-                if (winner == tcs.Task)
+                if (winner == tcs.Task && !tcs.Task.IsCanceled)
                 {
-                    Console.WriteLine($"Message {message.MessageId} acknowledged (attempt {attempt}).");
+                    _logger.Log("Sender", "Info", $"Message {message.MessageId} acknowledged (attempt {attempt}).");
                     return true;
                 }
-                Console.WriteLine($"No ACK for {message.MessageId} within {AckWaitTimeout.TotalSeconds}s");
+                _logger.Log("Sender","Warning", $"No ACK for {message.MessageId} within {AckWaitTimeout.TotalSeconds}s");
             }
-            Console.WriteLine($"Giving up on {message.MessageId} after {MaxPublishAttempts} attempts");
+
+            _logger.Log("Sender","Error", $"Giving up on {message.MessageId} after {MaxPublishAttempts} attempts");
             return false;
         }
         public async Task SendLoopAsync()
@@ -179,7 +224,11 @@ namespace providers
                     TimeStamp = DateTime.UtcNow,
                     Subject = subjects
                 };
-                await PublishAsync(message);
+                bool delivered = await PublishAsync(message);
+                if (!delivered)
+                {
+                    _logger.Log("Sender","Warning", "Not delivered");
+                }
 
                 Console.WriteLine("Send another message? (y/n)");
 

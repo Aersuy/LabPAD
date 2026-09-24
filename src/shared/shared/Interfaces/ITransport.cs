@@ -8,8 +8,8 @@ namespace shared.Interfaces
 {
     public interface ITransport
     {
-        Task<int> sendAsync(ReadOnlyMemory<byte> data);
-        Task<int> receiveAsync(Memory<byte> data);
+        Task<int> sendAsync(ReadOnlyMemory<byte> data,CancellationToken ct = default);
+        Task<int> receiveAsync(Memory<byte> data, CancellationToken ct = default);
         void close();
     }
 }

@@ -19,7 +19,7 @@ namespace shared
         {
             Converters = { new JsonStringEnumConverter() }
         };
-        public static async Task WriteMessageAsync(ITransport stream, MessageEnvelope msg)
+        public static async Task WriteMessageAsync(ITransport stream, MessageEnvelope msg, CancellationToken ct = default)
         {
             // Old way, not really thread safe, multiple threads writing to the same stream can cause issues
             //byte[] payload = JsonSerializer.SerializeToUtf8Bytes(msg, JsonOptions);
@@ -33,12 +33,12 @@ namespace shared
             byte[] frame = new byte[4 + payload.Length];
             BitConverter.TryWriteBytes(frame.AsSpan(0, 4), payload.Length);
             payload.CopyTo(frame.AsSpan(4));
-            await stream.sendAsync(frame);
+            await stream.sendAsync(frame,ct);
         }
-        public static async Task<MessageEnvelope?> ReadMessageAsync(ITransport stream)
+        public static async Task<MessageEnvelope?> ReadMessageAsync(ITransport stream, CancellationToken ct = default)
         {
             byte[] lengthBuffer = new byte[4];
-            int read = await ReadExactAsync(stream, lengthBuffer, 4);
+            int read = await ReadExactAsync(stream, lengthBuffer, 4,ct);
 
             if (read == 0) { return null; }
             if (read < 4)
@@ -53,7 +53,7 @@ namespace shared
             }
 
             byte[] payloadBuffer = new byte[length];
-            int payloadRead = await ReadExactAsync(stream, payloadBuffer, length);
+            int payloadRead = await ReadExactAsync(stream, payloadBuffer, length, ct);
             if (payloadRead < length)
             {
                 throw new EndOfStreamException("Conexiunea sa inchis in timpul citiri payload-ului");
@@ -67,12 +67,12 @@ namespace shared
                 throw new InvalidDataException($"Payload invalid: {ex.Message}");
             }
         }
-        private static async Task<int> ReadExactAsync(ITransport stream, byte[] buffer, int count)
+        private static async Task<int> ReadExactAsync(ITransport stream, byte[] buffer, int count, CancellationToken ct = default)
         {
             int totalRead = 0;
             while (totalRead < count)
             {
-                int n = await stream.receiveAsync(buffer.AsMemory(totalRead, count - totalRead));
+                int n = await stream.receiveAsync(buffer.AsMemory(totalRead, count - totalRead), ct);
                 if (n == 0) { return totalRead; }
                 totalRead += n;
             }

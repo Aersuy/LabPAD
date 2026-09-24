@@ -1,11 +1,14 @@
 ﻿using db_service.Implementation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using shared.Logging;
 using System.Net;
 
 IPAddress ip = IPAddress.Parse(GetEnv("BROKER_BIND_IP", "Give ip to bind broker to"));
 int port = int.Parse(GetEnv("BROKER_BIND_PORT", "Give port to bind broker to"));
 string dbPath = Environment.GetEnvironmentVariable("BROKER_DB_PATH") ?? "broker.db";
+string logPath = Environment.GetEnvironmentVariable("BROKER_LOG_PATH") ?? "broker.log";
+var logger = new FileLogger(logPath);
 
 var services = new ServiceCollection();
 services.AddDbContextFactory<BrokerDbContext>(options => options.UseSqlite($"Data Source={dbPath}"));
@@ -15,7 +18,7 @@ await using ServiceProvider provider = services.BuildServiceProvider();
 var messageService = provider.GetRequiredService<MessageService2>();
 await messageService.EnsureCreatedAsync();
 
-var broker = new Broker.Broker(ip, port, messageService);
+var broker = new Broker.Broker(ip, port, messageService, logger);
 broker.Start();
 await broker.RunAsync();
 

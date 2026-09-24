@@ -7,6 +7,7 @@ services:
       BROKER_BIND_IP: "0.0.0.0"
       BROKER_BIND_PORT: "6001"
       BROKER_DB_PATH: "/app/data/broker.db"
+      BROKER_LOG_PATH: "/app/data/broker.log"
     ports:
       - "6001:6001"
     volumes:
@@ -22,6 +23,7 @@ services:
       - broker
     environment:
     - RECEIVER_EFFECTS_PATH=/data/effects.log
+    - RECEIVER_LOG_PATH=/data/receiver.log
     volumes:
     - receiver-data:/data
   sender:
@@ -32,6 +34,11 @@ services:
     tty: true
     depends_on:
       - broker
+    environment:
+    - SENDER_LOG_PATH=/data/sender.log
+    volumes:
+    - sender-data:/data
 volumes:
   broker-data:
   receiver-data:  
+  sender-data:  

@@ -17,8 +17,10 @@ namespace receivers.Implementation
         {
             DataPayload? payload;
             try { payload = message.JsonPayload.Deserialize<DataPayload>(); }
-            catch (JsonException ex) { throw new PermanentFailureException("Payload not right",ex); }
-
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+            {
+                throw new PermanentFailureException("Malformed payload", ex);
+            }
             if (payload is null)
             {
                 throw new PermanentFailureException("Empty payload");

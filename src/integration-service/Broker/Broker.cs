@@ -3,6 +3,7 @@ using shared;
 using shared.Enums;
 using shared.IImplementations;
 using shared.Interfaces;
+using shared.Logging;
 using shared.Models;
 using System.Collections.Concurrent;
 using System.Net;
@@ -17,20 +18,21 @@ namespace Broker
         private readonly int _port;
         private Socket? _listenerSocket;
         private IMessageService2 _messageService;
-
+        private readonly FileLogger _logger;
+        private readonly ConcurrentDictionary<Guid, ReceiverConnection> _receivers = new();
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
         };
 
-        private readonly ConcurrentDictionary<Guid, ReceiverConnection> _receivers = new();
 
-        public Broker(IPAddress ip, int port, IMessageService2 messageService)
+        public Broker(IPAddress ip, int port, IMessageService2 messageService,FileLogger logger)
         {
             _ip = ip;
             _port = port;
             _messageService = messageService;
+            _logger = logger;
         }
         public void Start()
         {
@@ -38,7 +40,7 @@ namespace Broker
             _listenerSocket.Bind(new IPEndPoint(_ip, _port));
             _listenerSocket.Listen();
 
-            Console.WriteLine("Broker listening");
+            _logger.Log("Broker", "Info", "Broker listening");
         }
         public async Task RunAsync()
         {
@@ -52,49 +54,60 @@ namespace Broker
         private async Task HandleClientAsync(Socket socket)
         {
             ITransport transport = new VladTransport(socket);
-            MessageEnvelope? registerMsg;
             try
             {
-                registerMsg = await MessageProtocol.ReadMessageAsync(transport);
+                MessageEnvelope? registerMsg;
+                try
+                {
+                    registerMsg = await MessageProtocol.ReadMessageAsync(transport);
 
-            }
-            catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
-            {
-                Console.WriteLine("Registration failed");
-                transport.close();
-                return;
-            }
-            if (registerMsg is null || registerMsg.MessageType != MessageType.Register)
-            {
-                transport.close();
-                return;
-            }
-            RegisterPayload? payload;
-            try
-            {
-                payload = registerMsg.JsonPayload.Deserialize<RegisterPayload>(JsonOptions)
-                    ?? throw new JsonException("Empty register payload");
-            }
-            catch (JsonException ex)
-            {
-                await SendErrorMessageAsync(transport, "InvalidRegisterPayload", ex.Message);
-                transport.close();
-                return;
-            }
-            await SendAckAsync(transport, registerMsg.SenderId, registerMsg.MessageId);
-
-            switch (payload.Role)
-            {
-                case Roles.Subscriber:
-                    await HandleReceiverAsync(registerMsg.SenderId, transport, registerMsg.Subject);
-                    break;
-                case Roles.Sender:
-                    await HandleSenderAsync(registerMsg.SenderId, transport);
-                    break;
-                default:
-                    Console.WriteLine("Unrecognised role");
+                }
+                catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
+                {
+                    _logger.Log("Broker", "Warning", "Registration failed");
                     transport.close();
-                    break;
+                    return;
+                }
+                if (registerMsg is null || registerMsg.MessageType != MessageType.Register)
+                {
+                    transport.close();
+                    return;
+                }
+                RegisterPayload? payload;
+                try
+                {
+                    payload = registerMsg.JsonPayload.Deserialize<RegisterPayload>(JsonOptions)
+                        ?? throw new JsonException("Empty register payload");
+                }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException or NotSupportedException)
+                {
+                    await SendErrorMessageAsync(transport, "InvalidRegisterPayload", ex.Message);
+                    transport.close();
+                    return;
+                }
+                await SendAckAsync(transport, registerMsg.SenderId, registerMsg.MessageId);
+
+                switch (payload.Role)
+                {
+                    case Roles.Subscriber:
+                        await HandleReceiverAsync(registerMsg.SenderId, transport, registerMsg.Subject);
+                        break;
+                    case Roles.Sender:
+                        await HandleSenderAsync(registerMsg.SenderId, transport);
+                        break;
+                    default:
+                        _logger.Log("Broker", "Warning", "Unrecognised role");
+                        transport.close();
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Log("Broker", "Warning", $"HandleClientAsync threw: {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                transport.close();
             }
         }
         private static async Task SendErrorMessageAsync(ITransport transport, string message, string aditionalData = "")
@@ -138,8 +151,7 @@ namespace Broker
             using var sentCts = new CancellationTokenSource();
             var sendLoop = ReceiverSendLoopAsync(connection, sentCts.Token);
             previous?.Transport.close();
-            Console.WriteLine($"Receiver {id} registered for subjects : {string.Join(", ", subject)}");
-
+            _logger.Log("Broker", "Info", $"Receiver {id} registered for subjects : {string.Join(", ", subject)}");
             try
             {
                 while (true)
@@ -155,7 +167,7 @@ namespace Broker
             catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException
                                   or IOException or SocketException or ObjectDisposedException)
             {
-                Console.WriteLine($"Receiver {id} connection error: {ex.Message}");
+                _logger.Log("Broker", "Warning", $"Receiver {id} connection error: {ex.Message}");
             }
             finally
             {
@@ -170,7 +182,7 @@ namespace Broker
                 _receivers.TryRemove(new KeyValuePair<Guid, ReceiverConnection>(id, connection));
                 transport.close();
                 await sendLoop;
-                Console.WriteLine($"Receiver {id} disconnected.");
+                _logger.Log("Broker", "Info", $"Receiver {id} disconnected.");
             }
         }
         private const int MaxAttempts = 5;
@@ -191,7 +203,7 @@ namespace Broker
                         foreach (var delivery in deliveries)
                         {
                             ct.ThrowIfCancellationRequested();
-                            if (delivery.Attempts >= 5)
+                            if (delivery.Attempts >= MaxAttempts)
                             {
                                 await _messageService.MarkDeadLetterAsync(delivery.MessageId, delivery.ReceiverId, "Max attempts");
                                 continue;
@@ -205,16 +217,25 @@ namespace Broker
                             if (updated != 1)
                             {
                                 continue;
-                            }    
+                            }
+                            using var sendTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                            sendTimeoutCts.CancelAfter(SendTimeout);
                             try
                             {
-                                await MessageProtocol.WriteMessageAsync(receiver.Transport, envelope)
-                                                     .WaitAsync(SendTimeout, ct);
-                                Console.WriteLine($"Sent {envelope.MessageId} to {delivery.ReceiverId} (attempt {delivery.Attempts + 1})");
+                                await MessageProtocol.WriteMessageAsync(receiver.Transport, envelope, sendTimeoutCts.Token);
+                                _logger.Log("Broker", "Info", $"Sent {envelope.MessageId} to {delivery.ReceiverId} (attempt {delivery.Attempts + 1})");
                             }
+                            //Catch timeout exception
+                            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                            {
+                                _logger.Log("Broker", "Warning", $"Send to {delivery.ReceiverId} timed out");
+                                receiver.Transport.close();
+                                return;
+                            }
+                            //Catch other exceptions
                             catch (Exception ex) when (!ct.IsCancellationRequested)
                             {
-                                Console.WriteLine($"Send to {delivery.ReceiverId} failed: {ex.Message}");
+                                _logger.Log("Broker","Warning", $"Send to {delivery.ReceiverId} failed: {ex.Message}");
                                 receiver.Transport.close();
                                 return;
                             }
@@ -227,7 +248,7 @@ namespace Broker
                     catch (Exception ex)
                     {
                         // Database error
-                        Console.WriteLine($"Dispatcher error for {receiver.Id}: {ex.GetType().Name}: {ex.Message}");
+                        _logger.Log("Broker", "Error", $"Dispatcher error for {receiver.Id}: {ex.GetType().Name}: {ex.Message}");
                     }
 
                     await Task.Delay(PollInterval, ct);
@@ -251,7 +272,7 @@ namespace Broker
                         {
                             break;
                         }
-                        Console.WriteLine($"Receiver {receiverId} ACKed {ack.MessageAcknowledged}");
+                        _logger.Log("Broker","Info", $"Receiver {receiverId} ACKed {ack.MessageAcknowledged}");
                         await _messageService.MarkAckedAsync(ack.MessageAcknowledged, receiverId);
                         break;
                     case MessageType.Nack:
@@ -260,7 +281,7 @@ namespace Broker
                         {
                             break;
                         }
-                        Console.WriteLine($"Receiver {receiverId} NACKed {nack.MessageNacked} with reason: {nack.Reason}, retryable: {nack.Retryable}");
+                        _logger.Log("Broker","Warning", $"Receiver {receiverId} NACKed {nack.MessageNacked} with reason: {nack.Reason}, retryable: {nack.Retryable}");
                         if (nack.Retryable)
                         {
                             await _messageService.MarkRetryLaterAsync(nack.MessageNacked, receiverId, nack.Reason, DateTime.UtcNow + TimeSpan.FromSeconds(5));
@@ -271,18 +292,17 @@ namespace Broker
                         }
                         break;
                     default:
-                        Console.WriteLine($"Receiver {receiverId} sent unrecognized message type: {msg.MessageType}");
+                        _logger.Log("Broker", "Warning", $"Receiver {receiverId} sent unrecognized message type: {msg.MessageType}");
                         break;
                 }
             }
             catch (JsonException ex)
             {
-                Console.WriteLine($"Failed to deserialize message from receiver {receiverId}: {ex.Message}");
+                _logger.Log("Broker", "Warning", $"Failed to deserialize message from receiver {receiverId}: {ex.Message}");
             }
             catch (Exception ex)
             {
-
-                Console.WriteLine($"Failed to record {msg.MessageType} from receiver {receiverId}: {ex.GetType().Name}: {ex.Message}");
+                _logger.Log("Broker", "Error", $"Failed to record {msg.MessageType} from receiver {receiverId}: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -291,7 +311,7 @@ namespace Broker
         // the message is a duplicate, dispatches to all receivers that are subscribed
         private async Task HandleSenderAsync(Guid id, ITransport transport)
         {
-            Console.WriteLine($"Sender {id} registered");
+            _logger.Log("Broker", "Info", $"Sender {id} registered");
             try
             {
                 while (true)
@@ -301,7 +321,7 @@ namespace Broker
                     {
                         break;
                     }
-                    Console.WriteLine($"Sender {id} sent {msg.MessageType} for subjects: {string.Join(", ", msg.Subject)}");
+                    _logger.Log("Broker", "Info", $"Sender {id} sent {msg.MessageType} for subjects: {string.Join(", ", msg.Subject)}");
                     if (msg.MessageType == MessageType.Data)
                     {
                         var targetIds = GetReceiverIdsForSubjects(msg);
@@ -313,11 +333,12 @@ namespace Broker
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"Store failed for {msg.MessageId}: {ex.Message}");
+                            _logger.Log("Broker", "Error", $"Store failed for {msg.MessageId}: {ex.Message}");
+
                             continue;     // Skip sending ack if store fails
                         }
 
-                        Console.WriteLine($"Message {msg.MessageId}: {(isNew ? "stored" : "duplicate")}, {targetIds.Count} target receiver(s)");
+                        _logger.Log("Broker", "Info", $"Message {msg.MessageId}: {(isNew ? "stored" : "duplicate")}, {targetIds.Count} target receiver(s)");
                         await SendAckAsync(transport, id, msg.MessageId);
                     }
                 }
@@ -325,12 +346,12 @@ namespace Broker
             }
             catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
             {
-                Console.Write($"Sender {id} connection error");
+                _logger.Log("Broker", "Warning", $"Sender {id} connection error");
             }
             finally
             {
                 transport.close();
-                Console.WriteLine($"Sender {id} disconnected");
+                _logger.Log("Broker", "Info", $"Sender {id} disconnected");
             }
         }
         private IReadOnlyCollection<Guid> GetReceiverIdsForSubjects(MessageEnvelope msg) =>

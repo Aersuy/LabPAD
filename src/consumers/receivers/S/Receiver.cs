@@ -4,6 +4,7 @@ using shared;
 using shared.Enums;
 using shared.IImplementations;
 using shared.Interfaces;
+using shared.Logging;
 using shared.Models;
 using System.Net;
 using System.Net.Sockets;
@@ -22,6 +23,11 @@ namespace receivers.S
         {
             [1] = new DataHandler1(),
         };
+        private readonly FileLogger _logger;
+        public Receiver(FileLogger logger)
+        {
+            _logger = logger;
+        }
         private static string GetEffectsPath() =>
           Environment.GetEnvironmentVariable("RECEIVER_EFFECTS_PATH") ?? "effects.log";
         public void Start()
@@ -50,9 +56,10 @@ namespace receivers.S
                 ProtocolType.Tcp
             );
 
-            Console.WriteLine($"Connecting to broker at {brokerHost}:{brokerPort}...");
+            _logger.Log("Receiver", "Info", $"Connecting to broker at {brokerHost}:{brokerPort}...");
             await _brokerSocket.ConnectAsync(brokerHost, brokerPort);
-            Console.WriteLine("Connected to broker.");
+            _logger.Log("Receiver", "Info", "Connected to broker.");
+
             _transport = new VladTransport(_brokerSocket);
 
             var payload = new RegisterPayload
@@ -70,12 +77,13 @@ namespace receivers.S
                 JsonPayload = System.Text.Json.JsonSerializer.SerializeToElement(payload),
                 Subject = subjects
             };
-            Console.WriteLine($"Registering with broker with subjects: {string.Join(", ", subjects)}");
+            _logger.Log("Receiver", "Info", $"Registering with broker with subjects: {string.Join(", ", subjects)}");
             await MessageProtocol.WriteMessageAsync(
                 _transport,
                 registerMessage
             );
-            Console.WriteLine("Waiting for broker response...");
+            _logger.Log("Receiver", "Info", "Waiting for broker response...");
+
 
             MessageEnvelope? response;
 
@@ -90,38 +98,39 @@ namespace receivers.S
                 when (ex is EndOfStreamException
                     or InvalidDataException)
             {
-                Console.WriteLine(
-                    $"Registration failed: {ex.Message}"
-                );
+                _logger.Log("Receiver", "Warning", $"Registration failed: {ex.Message}");
 
+                _brokerSocket.Close();
                 return false;
             }
 
             if (response is null)
             {
+                _brokerSocket.Close();
                 return false;
             }
 
             if (response.MessageType != shared.Enums.MessageType.Ack)
             {
-                Console.WriteLine($"Registration failed: expected Ack, got {response.MessageType}");
+                _logger.Log("Receiver", "Warning", $"Registration failed: expected Ack, got {response.MessageType}");
+                _brokerSocket.Close();
                 return false;
             }
-            Console.WriteLine("Registration confirmed.");
+            _logger.Log("Receiver", "Info", "Registration confirmed.");
             return true;
         }
         public async Task RunAsync()
         {
             if (!await RegisterWithBroker())
             {
-                Console.WriteLine("Failed to register");
+                _logger.Log("Receiver", "Error", "Failed to register");
                 return;
             }
             await ReceiveLoopAsync();
         }
         private async Task ReceiveLoopAsync()
         {
-            Console.WriteLine("Entering receive loop.");
+            _logger.Log("Receiver", "Info", "Entering receive loop.");
             while (true)
             {
                 MessageEnvelope? message;
@@ -131,13 +140,14 @@ namespace receivers.S
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"ReceiveLoopAsync threw: {ex.GetType().Name}: {ex.Message}");
-                    Console.WriteLine(ex.StackTrace);
+                    _logger.Log("Receiver", "Error", $"ReceiveLoopAsync threw: {ex.GetType().Name}: {ex.Message} {ex.StackTrace}");
+                    _brokerSocket?.Close();
                     return;
                 }
                 if (message is null)
                 {
-                    Console.WriteLine("Broker disconnected. (ReadMessageAsync returned null / 0 bytes read).");
+                    _brokerSocket.Close();
+                    _logger.Log("Receiver", "Warning", "Broker disconnected. (ReadMessageAsync returned null / 0 bytes read).");
                     return;
                 }
                 try
@@ -146,8 +156,7 @@ namespace receivers.S
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"HandleMessage threw: {ex.GetType().Name}: {ex.Message}");
-                    Console.WriteLine(ex.StackTrace);
+                    _logger.Log("Receiver", "Error", $"HandleMessage threw: {ex.GetType().Name}: {ex.Message} {ex.StackTrace}");
                 }
             }
         }
@@ -161,17 +170,15 @@ namespace receivers.S
             switch (message.MessageType)
             {
                 case MessageType.Error:
-                    Console.WriteLine(
-                        $"[{message.TimeStamp:HH:mm:ss}] Error: {string.Join(", ", message.Subject)} - {message.JsonPayload.GetRawText()}"
-                    );
+                    _logger.Log("Receiver", "Warning", $"[{message.TimeStamp:HH:mm:ss}] Error: {string.Join(", ", message.Subject)} - {message.JsonPayload.GetRawText()}");     
                     break;
 
                 case MessageType.Ack:
-                    Console.WriteLine($"[{message.TimeStamp:HH:mm:ss}] Ack for {message.MessageId}");
+                    _logger.Log("Receiver", "Info", $"[{message.TimeStamp:HH:mm:ss}] Ack for {message.MessageId}");
                     break;
 
                 default:
-                    Console.WriteLine($"[{message.TimeStamp:HH:mm:ss}] Unhandled message type: {message.MessageType}");
+                    _logger.Log("Receiver", "Warning", $"[{message.TimeStamp:HH:mm:ss}] Unhandled message type: {message.MessageType}");
                     break;
             }
         }
@@ -193,8 +200,8 @@ namespace receivers.S
                 }
                 else
                 {
-                    Console.WriteLine($"[{message.TimeStamp:HH:mm:ss}] (v{message.Version}) applied {message.MessageId}: {content}");
-                    Console.WriteLine("Waiting for next message");
+                    _logger.Log("Receiver", "Info", $"[{message.TimeStamp:HH:mm:ss}] (v{message.Version}) applied {message.MessageId}: {content}");
+                    _logger.Log("Receiver", "Info", "Waiting for next message");
                 }
             } catch (PermanentFailureException ex)
             {
