@@ -14,7 +14,7 @@ namespace db_service.Interfaces
         Task EnsureCreatedAsync();
         Task<List<DueDelivery>> GetDueDeliveriesAsync(DateTime now, IReadOnlyCollection<Guid> connectedReceiverIds, int batchSize);
         Task<MessageEnvelope?> LoadEnvelopeAsync(Guid messageId);
-        Task<int> RecordAttemptAsync(Guid messageId, Guid receiverId, DateTime nextAttemptAt);
+        Task<int> RecordAttemptAsync(Guid messageId, Guid receiverId, DateTime now, DateTime nextAttemptAt);
 
         // IDEMPOTENT METHODS
         Task<int> MarkAckedAsync(Guid messageId, Guid receiverID);

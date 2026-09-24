@@ -141,13 +141,15 @@ namespace db_service.Implementation
         /// <param name="receiverId"></param>
         /// <param name="nextAttemptAt"></param>
         /// <returns></returns>
-        public async Task<int> RecordAttemptAsync(Guid messageId, Guid receiverId, DateTime nextAttemptAt)
+        public async Task<int> RecordAttemptAsync(Guid messageId, Guid receiverId,DateTime now,DateTime nextAttemptAt)
         {
             await using var db = await _contextFactory.CreateDbContextAsync();
-            return await db.Deliveries.Where(d => d.MessageId == messageId && d.ReceiverId == receiverId && d.Status == DeliveryStatus.Pending)
+            return await db.Deliveries.Where(d => d.MessageId == messageId && d.ReceiverId == receiverId && d.Status == DeliveryStatus.Pending
+                                             // The dateTime comparison below is to guard against a race condition
+                                             // where nextAttempt is called by 2 threads at the same time
+                                             && d.NextAttemptAt <= now)
                 .ExecuteUpdateAsync(d => d.SetProperty(delivery => delivery.NextAttemptAt, nextAttemptAt)
                 .SetProperty(delivery => delivery.Attempts, delivery => delivery.Attempts + 1));
-
         }
         public async Task<bool> MessageExistsAsync(Guid messageId)
         {

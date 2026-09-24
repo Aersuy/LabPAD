@@ -199,10 +199,13 @@ namespace Broker
                             var envelope = await _messageService.LoadEnvelopeAsync(delivery.MessageId);
                             if (envelope is null)
                                 continue;
-
-                            await _messageService.RecordAttemptAsync(
-                                delivery.MessageId, delivery.ReceiverId, DateTime.UtcNow + AckTimeout);
-
+                            var now = DateTime.UtcNow;
+                            int updated = await _messageService.RecordAttemptAsync(
+                                delivery.MessageId, delivery.ReceiverId, now, now + AckTimeout);
+                            if (updated != 1)
+                            {
+                                continue;
+                            }    
                             try
                             {
                                 await MessageProtocol.WriteMessageAsync(receiver.Transport, envelope)
