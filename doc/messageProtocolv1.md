@@ -11,13 +11,21 @@ Enum-urile sunt serializate nu transmise ca int
 
 ## MessageEnvelope
 Name,Type,Required
-MessageType,enum,yes
-MessageId`,guid,yes
-SenderId,guid,yes
-Timestamp,datetime,yes   // Note, UTC
-Subject,list<string>,yes
-JsonPayload,object,yes
-Version,int,yes       //  Note, default = 1
+
+MessageType,`enum`,yes
+
+MessageId,`guid`,yes
+
+SenderId,`guid`,yes
+
+Timestamp,`datetime`,yes   // Note, UTC
+
+Subject,`list<string>`,yes
+
+JsonPayload,`object`,yes
+
+Version,`int`,yes       //  Note, default = 1
+
 
 Payloads
 `DataPayload`
@@ -38,13 +46,22 @@ Versioning
 MessageEnvelope.Version identifies the envelope/payload schema version (currently always 1). No V2 payloads exist yet. Convention going forward: a breaking change to any payload shape bumps Version and gets a new message-v2.md rather than mutating this doc in place.
 
 Versionare
+
 `MessageEnvelope.Verion` identifică versiunea 
+
 1,2,...,N(int)
+
 `IDataHandler` defineste metode
+
 `DataHandler1` implementeaza versiunea 1
+
 Un dictionar cu formatul
+
 `Dictionary<int,IDataHandler>` contine toti handleri necesari.
+
 Eg:
+
 `!_dataHandlers.TryGetValue(message.Version, out IDataHandler? handler)`
+
 `string content = handler.Handle(message);`
 
