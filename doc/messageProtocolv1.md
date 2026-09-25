@@ -27,6 +27,11 @@ JsonPayload,`object`,yes
 Version,`int`,yes       //  Note, default = 1
 
 
+
+
+
+
+
 Payloads
 `DataPayload`
 { "Content": "string" }
@@ -40,10 +45,6 @@ Payloads
 `NackPayload`
 { "MessageNacked": "guid", "Reason": "string", "Retryable": true }
 
-
-Versioning
-
-MessageEnvelope.Version identifies the envelope/payload schema version (currently always 1). No V2 payloads exist yet. Convention going forward: a breaking change to any payload shape bumps Version and gets a new message-v2.md rather than mutating this doc in place.
 
 Versionare
 
