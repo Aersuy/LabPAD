@@ -1,3 +1,4 @@
+## Frameuri
 Every message is a length-prefixed JSON frame over the transport (`ITransport`):
 Fiecare mesaj e transmis ca un frame folosind `ITransport`, lungimea e prefixul
 
@@ -31,7 +32,7 @@ Version,`int`,yes       //  Note, default = 1
 
 
 
-
+## Payload-uri
 Payloads
 `DataPayload`
 { "Content": "string" }
@@ -46,7 +47,7 @@ Payloads
 { "MessageNacked": "guid", "Reason": "string", "Retryable": true }
 
 
-Versionare
+## Versionare
 
 `MessageEnvelope.Verion` identifică versiunea 
 

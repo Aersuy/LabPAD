@@ -1,0 +1,9 @@
+{
+  "MessageType": "Nack",
+  "MessageId": "7e2a3b4c-5d6e-4f70-8192-a3b4c5d6e7f8",
+  "SenderId": "9c858901-8a57-4791-81fe-4c455b099bc9",
+  "TimeStamp": "2026-09-25T10:00:01Z",
+  "Subject": [],
+  "JsonPayload": { "MessageNacked": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "Reason": "handler timeout", "Retryable": true },
+  "Version": 1
+}

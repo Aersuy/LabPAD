@@ -1,0 +1,9 @@
+{
+  "MessageType": "Data",
+  "MessageId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "SenderId": "9c858901-8a57-4791-81fe-4c455b099bc9",
+  "TimeStamp": "2026-09-25T10:00:00Z",
+  "Subject": ["temperature"],
+  "JsonPayload": { "Content": "23.5" },
+  "Version": 1
+}

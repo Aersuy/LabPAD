@@ -22,6 +22,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
 	ProjectSection(SolutionItems) = preProject
 		docker-compose.yml = docker-compose.yml
+		notes.txt = notes.txt
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "db-service", "db-service", "{EF8B5E00-EAD6-4B36-95F2-568296BA1E27}"
@@ -29,6 +30,27 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "db-service", "src\db-service\db-service\db-service.csproj", "{636733F8-3695-4DB9-BC37-48159EEA52DD}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "providers", "src\providers\providers\providers.csproj", "{28AEA10F-7896-0C37-7EF1-697D00BE3EA3}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{ECC229F9-0851-4CE1-A2BA-8088B2F03388}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnitTests", "test\UnitTests\UnitTests.csproj", "{691BEF04-57FE-4952-9529-7E3EF5FE95A1}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{48E2B3A0-9053-4914-A1FF-A55D6984F3D1}"
+	ProjectSection(SolutionItems) = preProject
+		doc\messageProtocolv1.md = doc\messageProtocolv1.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "contracts", "contracts", "{47B114AB-3BFF-4606-8E11-AC7F05F4E336}"
+	ProjectSection(SolutionItems) = preProject
+		contracts\invalid-data_json.json = contracts\invalid-data_json.json
+		contracts\invalid-missing-content.json = contracts\invalid-missing-content.json
+		contracts\invalid-null-content.json = contracts\invalid-null-content.json
+		contracts\invalid-unknown_type.json = contracts\invalid-unknown_type.json
+		contracts\valid-ack.json = contracts\valid-ack.json
+		contracts\valid-data.json = contracts\valid-data.json
+		contracts\valid-nack.json = contracts\valid-nack.json
+		contracts\valid-register.json = contracts\valid-register.json
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -56,6 +78,10 @@ Global
 		{28AEA10F-7896-0C37-7EF1-697D00BE3EA3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{28AEA10F-7896-0C37-7EF1-697D00BE3EA3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{28AEA10F-7896-0C37-7EF1-697D00BE3EA3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{691BEF04-57FE-4952-9529-7E3EF5FE95A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{691BEF04-57FE-4952-9529-7E3EF5FE95A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{691BEF04-57FE-4952-9529-7E3EF5FE95A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{691BEF04-57FE-4952-9529-7E3EF5FE95A1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -71,6 +97,7 @@ Global
 		{EF8B5E00-EAD6-4B36-95F2-568296BA1E27} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{636733F8-3695-4DB9-BC37-48159EEA52DD} = {EF8B5E00-EAD6-4B36-95F2-568296BA1E27}
 		{28AEA10F-7896-0C37-7EF1-697D00BE3EA3} = {C19B6C66-F262-4B86-BAAB-383C4027DA6E}
+		{691BEF04-57FE-4952-9529-7E3EF5FE95A1} = {ECC229F9-0851-4CE1-A2BA-8088B2F03388}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3CD02479-DD25-4FAD-AB70-640AC6DCB2EB}

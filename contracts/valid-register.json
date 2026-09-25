@@ -1,0 +1,9 @@
+{
+  "MessageType": "Register",
+  "MessageId": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
+  "SenderId": "9c858901-8a57-4791-81fe-4c455b099bc9",
+  "TimeStamp": "2026-09-25T10:00:00Z",
+  "Subject": [],
+  "JsonPayload": { "IpAddress": "127.0.0.1", "Port": 6001, "Role": "Sender" },
+  "Version": 1
+}
