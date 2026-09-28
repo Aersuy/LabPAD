@@ -1,5 +1,4 @@
 ## Frameuri
-Every message is a length-prefixed JSON frame over the transport (`ITransport`):
 Fiecare mesaj e transmis ca un frame folosind `ITransport`, lungimea e prefixul
 
 Byte 0-3 Lungimea
