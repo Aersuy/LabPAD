@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "BrokerGrpc": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}

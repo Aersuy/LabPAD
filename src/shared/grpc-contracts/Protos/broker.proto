@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+option csharp_namespace = "grpc_contracts";
+
+package labpad.broker.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Broker exposed over gRPC (HTTP/2 over TCP).
+// Senders publish with a unary call, the reply is the Ack.
+// Receivers subscribe with a server stream (Publisher / Subscriber, push based)
+// and confirm every delivery with the Acknowledge / Reject unary calls.
+service BrokerService {
+  rpc Publish (PublishRequest) returns (PublishReply);
+  rpc Subscribe (SubscribeRequest) returns (stream Delivery);
+  rpc Acknowledge (AckRequest) returns (AckReply);
+  rpc Reject (NackRequest) returns (AckReply);
+}
+
+// Same content as shared.Models.DataPayload
+message DataPayload {
+  string content = 1;
+}
+
+// Same fields as shared.Models.MessageEnvelope, guids are sent as strings
+message Envelope {
+  string message_id = 1;
+  string sender_id = 2;
+  google.protobuf.Timestamp time_stamp = 3;
+  repeated string subject = 4;
+  int32 version = 5;
+  oneof payload {
+    DataPayload data = 6;
+  }
+}
+
+message PublishRequest {
+  Envelope message = 1;
+}
+
+message PublishReply {
+  string message_acknowledged = 1;
+  bool duplicate = 2;
+  int32 target_receivers = 3;
+}
+
+message SubscribeRequest {
+  string receiver_id = 1;
+  repeated string subject = 2;
+}
+
+message Delivery {
+  Envelope message = 1;
+  int32 attempt = 2;
+}
+
+message AckRequest {
+  string receiver_id = 1;
+  string message_acknowledged = 2;
+}
+
+message NackRequest {
+  string receiver_id = 1;
+  string message_nacked = 2;
+  string reason = 3;
+  bool retryable = 4;
+}
+
+message AckReply {
+  bool recorded = 1;
+}

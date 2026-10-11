@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\integration-service\Broker\Broker.csproj" />
     <ProjectReference Include="..\..\src\providers\providers\providers.csproj" />
     <ProjectReference Include="..\..\src\shared\shared\shared.csproj" />
+    <ProjectReference Include="..\..\src\shared\grpc-contracts\grpc-contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

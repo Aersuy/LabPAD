@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "receiversGrpc": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}

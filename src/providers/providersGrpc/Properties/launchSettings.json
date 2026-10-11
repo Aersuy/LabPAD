@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "providersGrpc": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
