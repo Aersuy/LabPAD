@@ -16,6 +16,8 @@ namespace db_service.Implementation
         public DbSet<MessageDbModel> Messages => Set<MessageDbModel>();
         public DbSet<SubjectDbModel> Subjects => Set<SubjectDbModel>();
         public DbSet<DeliveryDbModel> Deliveries => Set<DeliveryDbModel>();
+        public DbSet<SubscriptionDbModel> Subscriptions => Set<SubscriptionDbModel>();
+        public DbSet<SubscriptionSubjectDbModel> SubscriptionSubjects => Set<SubscriptionSubjectDbModel>();
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<SubjectDbModel>()
@@ -31,6 +33,20 @@ namespace db_service.Implementation
                 e.HasOne(d => d.Message).WithMany().HasForeignKey(d => d.MessageId);
                 e.HasIndex(d => new { d.Status, d.NextAttemptAt });             
                 e.Property(d => d.Status).HasConversion<string>();                
+            });
+            modelBuilder.Entity<SubscriptionDbModel>(e =>
+            {
+                e.HasKey(s => s.ReceiverId);
+                e.Property(s => s.Name).IsRequired();
+            });
+            modelBuilder.Entity<SubscriptionSubjectDbModel>(e =>
+            {
+                e.HasKey(s => new { s.ReceiverId, s.Subject });
+                e.HasOne(s => s.Subscription)
+                    .WithMany(s => s.Subjects)
+                    .HasForeignKey(s => s.ReceiverId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                e.HasIndex(s => s.Subject);
             });
         }
 

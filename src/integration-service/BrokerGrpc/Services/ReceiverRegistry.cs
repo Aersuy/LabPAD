@@ -20,11 +20,16 @@ namespace BrokerGrpc.Services
         public void Remove(ReceiverSubscription subscription) =>
             _receivers.TryRemove(new KeyValuePair<Guid, ReceiverSubscription>(subscription.Id, subscription));
 
-        public IReadOnlyCollection<Guid> GetReceiverIdsForSubjects(IEnumerable<string> subjects) =>
-            _receivers.Values
-            .Where(r => r.Subject.Intersect(subjects).Any())
-            .Select(r => r.Id)
-            .ToList();
+        public void Notify(IEnumerable<Guid> receiverIds)
+        {
+            foreach (Guid id in receiverIds)
+            {
+                if (_receivers.TryGetValue(id, out ReceiverSubscription? subscription))
+                {
+                    subscription.Signal();
+                }
+            }
+        }
     }
 
     public sealed class ReceiverSubscription : IDisposable
@@ -34,11 +39,38 @@ namespace BrokerGrpc.Services
         // Cancelled when the stream ends or when the same receiver subscribes again
         public CancellationTokenSource Cancellation { get; }
 
+        // Semnal "exista lucru de facut". SemaphoreSlim(0, 1) se comporta ca un
+        // AutoResetEvent asincron: semnalul dat in timpul unei interogari nu se pierde,
+        // urmatoarea asteptare se intoarce imediat
+        private readonly SemaphoreSlim _signal = new(0, 1);
+
         public ReceiverSubscription(Guid id, List<string> subject, CancellationToken callToken)
         {
             Id = id;
             Subject = subject;
             Cancellation = CancellationTokenSource.CreateLinkedTokenSource(callToken);
+        }
+
+        public void Signal()
+        {
+            try
+            {
+                if (_signal.CurrentCount == 0)
+                {
+                    _signal.Release();
+                }
+            }
+            catch (SemaphoreFullException) { }
+            catch (ObjectDisposedException) { }
+        }
+
+        public async Task WaitForWorkAsync(TimeSpan timeout, CancellationToken ct)
+        {
+            try
+            {
+                await _signal.WaitAsync(timeout, ct);
+            }
+            catch (ObjectDisposedException) { }
         }
 
         public void Cancel()
@@ -47,6 +79,10 @@ namespace BrokerGrpc.Services
             catch (ObjectDisposedException) { }
         }
 
-        public void Dispose() => Cancellation.Dispose();
+        public void Dispose()
+        {
+            Cancellation.Dispose();
+            _signal.Dispose();
+        }
     }
 }

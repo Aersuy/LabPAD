@@ -4,6 +4,7 @@ using grpc_contracts.Mapping;
 using Grpc.Core;
 using shared.Logging;
 using shared.Models;
+using grpc_contracts.Identity;
 
 namespace BrokerGrpc.Services
 {
@@ -16,6 +17,7 @@ namespace BrokerGrpc.Services
         private readonly FileLogger _logger;
 
         private const int MaxAttempts = 5;
+        private const int BatchSize = 10;
         private static readonly TimeSpan AckTimeout = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
@@ -42,8 +44,16 @@ namespace BrokerGrpc.Services
                 throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
             }
             _logger.Log("Broker", "Info", $"Sender {msg.SenderId} sent {msg.MessageType} for subjects: {string.Join(", ", msg.Subject)}");
-
-            var targetIds = _receivers.GetReceiverIdsForSubjects(msg.Subject);
+            IReadOnlyCollection<Guid> targetIds;
+            try
+            {
+                targetIds = await _messageService.GetSubscriberIdsForSubjectsAsync(msg.Subject);
+            }
+            catch (Exception ex)
+            {
+                _logger.Log("Broker", "Error", $"Failed to get receivers for {msg.MessageId}: {ex.Message}");
+                throw new RpcException(new Status(StatusCode.Unavailable, "Failed to get receivers"));
+            }
             bool isNew;
             try
             {
@@ -57,6 +67,16 @@ namespace BrokerGrpc.Services
             }
 
             _logger.Log("Broker", "Info", $"Message {msg.MessageId}: {(isNew ? "stored" : "duplicate")}, {targetIds.Count} target receiver(s)");
+            // Message is new but no subscribers, log a warning but still ack the sender
+            if (isNew && targetIds.Count == 0)
+            {
+                _logger.Log("Broker", "Warning",
+                    $"Message {msg.MessageId} has no subscriber for subjects: {string.Join(", ", msg.Subject)}");
+            }
+            if (isNew && targetIds.Count > 0)
+            {
+                _receivers.Notify(targetIds);
+            }
             return new PublishReply
             {
                 MessageAcknowledged = msg.MessageId.ToString(),
@@ -69,15 +89,43 @@ namespace BrokerGrpc.Services
         // and pushes the due deliveries of this receiver from the storage
         public override async Task Subscribe(SubscribeRequest request, IServerStreamWriter<Delivery> responseStream, ServerCallContext context)
         {
+            string name;
+            Guid expectedId;
+            try
+            {
+                name = ReceiverIdentity.NormalizeName(request.ReceiverName);
+                expectedId = ReceiverIdentity.FromName(name);
+            }
+            catch (InvalidDataException ex)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
+            }
+
             Guid id = ParseId(request.ReceiverId, "ReceiverId");
+            // Fail loudly instead of letting the acks of a mislabelled receiver go nowhere
+            if (id != expectedId)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "ReceiverId does not match ReceiverName"));
+            }
+
             List<string> subject = request.Subject
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Select(s => s.Trim())
-                .Distinct()
-                .ToList();
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .Distinct()
+            .ToList();
             if (subject.Count == 0)
             {
                 throw new RpcException(new Status(StatusCode.InvalidArgument, "At least one subject is required"));
+            }
+
+            try
+            {
+                await _messageService.UpsertSubscriptionAsync(id, name, subject);
+            }
+            catch (Exception ex)
+            {
+                _logger.Log("Broker", "Error", $"Failed to store subscription for {name}: {ex.Message}");
+                throw new RpcException(new Status(StatusCode.Unavailable, "Failed to store subscription"));
             }
 
             using var subscription = new ReceiverSubscription(id, subject, context.CancellationToken);
@@ -97,14 +145,17 @@ namespace BrokerGrpc.Services
 
         private async Task ReceiverSendLoopAsync(ReceiverSubscription receiver, IServerStreamWriter<Delivery> stream, CancellationToken ct)
         {
+            
             var receiverIds = new[] { receiver.Id };
             try
             {
                 while (!ct.IsCancellationRequested)
                 {
+                    bool batchWasFull = false;
                     try
                     {
                         var deliveries = await _messageService.GetDueDeliveriesAsync(DateTime.UtcNow, receiverIds, 10);
+                        batchWasFull = deliveries.Count == BatchSize;
                         foreach (var delivery in deliveries)
                         {
                             ct.ThrowIfCancellationRequested();
@@ -163,8 +214,11 @@ namespace BrokerGrpc.Services
                         // Database error
                         _logger.Log("Broker", "Error", $"Dispatcher error for {receiver.Id}: {ex.GetType().Name}: {ex.Message}");
                     }
-
-                    await Task.Delay(PollInterval, ct);
+                    if (batchWasFull)
+                    {
+                        continue;
+                    }
+                    await receiver.WaitForWorkAsync(PollInterval, ct);
                 }
             }
             catch (OperationCanceledException)
@@ -218,6 +272,17 @@ namespace BrokerGrpc.Services
                 _logger.Log("Broker", "Error", $"Failed to record {type} from receiver {receiverId}: {ex.GetType().Name}: {ex.Message}");
                 throw new RpcException(new Status(StatusCode.Unavailable, $"Failed to record {type}"));
             }
+        }
+
+        public override async Task<AckReply> Extend(ExtendRequest request, ServerCallContext context)
+        {
+            Guid receiverId = ParseId(request.ReceiverId, "ReceiverId");
+            Guid messageId = ParseId(request.MessageId, "MessageId");
+
+            int updated = await RecordAsync(
+                () => _messageService.ExtendLeaseAsync(messageId, receiverId, DateTime.UtcNow + AckTimeout),
+                "Extend", receiverId);
+            return new AckReply { Recorded = updated > 0 };
         }
     }
 }

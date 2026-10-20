@@ -63,7 +63,7 @@ services:
     depends_on:
       - broker-grpc
     environment:
-    - RECEIVER_EFFECTS_PATH=/data/effects-grpc.log
+    - RECEIVER_EFFECTS_DIR=/data
     - RECEIVER_LOG_PATH=/data/receiver-grpc.log
     volumes:
     - receiver-grpc-data:/data

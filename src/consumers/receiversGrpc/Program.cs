@@ -5,5 +5,4 @@ string logPath = Environment.GetEnvironmentVariable("RECEIVER_LOG_PATH") ?? "rec
 
 var logger = new FileLogger(logPath);
 GrpcReceiver _receiver = new GrpcReceiver(logger);
-_receiver.Start();
 await _receiver.RunAsync();

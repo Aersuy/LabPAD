@@ -51,6 +51,11 @@ namespace providersGrpc
                 {
                     PublishReply reply = await _client!.PublishAsync(request, deadline: DateTime.UtcNow + AckWaitTimeout);
                     _logger.Log("Sender", "Info", $"Message {reply.MessageAcknowledged} acknowledged (attempt {attempt}, {(reply.Duplicate ? "duplicate" : "new")}, {reply.TargetReceivers} target receiver(s)).");
+                    if (reply.TargetReceivers == 0)
+                    {
+                        _logger.Log("Sender", "Warning",
+                            $"Message {reply.MessageAcknowledged} has no subscriber, it will not be delivered");
+                    }
                     return true;
                 }
                 // Message rejected by validation, sending it again will not help

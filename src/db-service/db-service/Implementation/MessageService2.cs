@@ -69,6 +69,7 @@ namespace db_service.Implementation
         public async Task<bool> StoreMessageIfNewAsync(MessageEnvelope message, IReadOnlyCollection<Guid> receiverIds)
         {
             const int maxAttempts = 3;
+            DbUpdateException? lastError = null;
             for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
                 await using var db = await _contextFactory.CreateDbContextAsync();
@@ -79,21 +80,20 @@ namespace db_service.Implementation
                     await db.SaveChangesAsync();
                     return true;
                 }
-                catch (DbUpdateException)
+                catch (DbUpdateException ex)
                 {
+                    // MessageId este cheie primara, conflictul inseamna ca senderul a retrimis mesajul
                     if (await MessageExistsAsync(message.MessageId))
                     {
                         return false;
                     }
-                    // If we reach here, the message does not exist
-                    // some issue accoured while saving, we can retry
-                    if (attempt == maxAttempts)
-                    {
-                        throw;
-                    }
+                    // Eroare tranzitorie, se reincearca pe un context nou
+                    lastError = ex;
                 }
             }
-            return false;
+            // fix silent failure throw exception
+            throw new InvalidOperationException(
+                    $"Could not store message {message.MessageId} after {maxAttempts} attempts", lastError);
         }
         /// <summary>
         /// IDEMPOTENT
@@ -211,5 +211,102 @@ namespace db_service.Implementation
             await using var db = await _contextFactory.CreateDbContextAsync();
             await db.Database.EnsureCreatedAsync();
         }
+
+        // LAB 2 METHODS
+        public async Task UpsertSubscriptionAsync(Guid receiverId, string name, IReadOnlyCollection<string> subjects)
+        {
+            List<string> wanted = subjects
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.Trim())
+                .Distinct()
+                .ToList();
+
+            const int maxAttempts = 3;
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                await using var db = await _contextFactory.CreateDbContextAsync();
+
+                SubscriptionDbModel? subscription = await db.Subscriptions
+                    .Include(s => s.Subjects)
+                    .FirstOrDefaultAsync(s => s.ReceiverId == receiverId);
+
+                if (subscription is null)
+                {
+                    subscription = new SubscriptionDbModel { ReceiverId = receiverId };
+                    db.Subscriptions.Add(subscription);
+                }
+
+                subscription.Name = name;
+                subscription.UpdatedAt = DateTime.UtcNow;
+
+                List<SubscriptionSubjectDbModel> removed = subscription.Subjects
+                    .Where(s => !wanted.Contains(s.Subject))
+                    .ToList();
+                db.SubscriptionSubjects.RemoveRange(removed);
+                foreach (var row in removed)
+                {
+                    subscription.Subjects.Remove(row);
+                }
+
+                List<string> existing = subscription.Subjects.Select(s => s.Subject).ToList();
+                foreach (string subject in wanted.Except(existing))
+                {
+                    subscription.Subjects.Add(new SubscriptionSubjectDbModel
+                    {
+                        ReceiverId = receiverId,
+                        Subject = subject
+                    });
+                }
+
+                try
+                {
+                    await db.SaveChangesAsync();
+                    return;
+                }
+                catch (DbUpdateException)
+                {
+                    // probable race condition, retry
+                    if (attempt == maxAttempts - 1)
+                    {
+                        throw;
+                    }
+                }
+            }
+        }
+        public async Task<IReadOnlyCollection<Guid>> GetSubscriberIdsForSubjectsAsync(IEnumerable<string> subjects)
+        {
+            List<string> names = subjects
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.Trim())
+                .Distinct()
+                .ToList();
+            if (names.Count == 0)
+            {
+                return Array.Empty<Guid>();
+            }
+
+            await using var db = await _contextFactory.CreateDbContextAsync();
+            return await db.SubscriptionSubjects
+                .Where(s => names.Contains(s.Subject))
+                .Select(s => s.ReceiverId)
+                .Distinct()
+                .ToListAsync();
+        }
+
+        /// <summary>
+        /// IDEMPOTENT
+        /// ATOMIC
+        /// ONLY WORKS WHEN STATUS IS PENDING
+        /// Amana doar relivrarea, NU incrementeaza Attempts: un consumator lent
+        /// nu trebuie sa consume incercari si sa ajunga in DLQ
+        /// </summary>
+        public async Task<int> ExtendLeaseAsync(Guid messageId, Guid receiverId, DateTime nextAttemptAt)
+        {
+            await using var db = await _contextFactory.CreateDbContextAsync();
+            return await db.Deliveries
+                .Where(d => d.MessageId == messageId && d.ReceiverId == receiverId && d.Status == DeliveryStatus.Pending)
+                .ExecuteUpdateAsync(d => d.SetProperty(delivery => delivery.NextAttemptAt, nextAttemptAt));
+        }
+
     }
 }

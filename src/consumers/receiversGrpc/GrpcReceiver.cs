@@ -6,6 +6,7 @@ using receivers.Implementation;
 using receivers.Interfaces;
 using shared.Logging;
 using shared.Models;
+using grpc_contracts.Identity;
 
 namespace receiversGrpc
 {
@@ -16,7 +17,8 @@ namespace receiversGrpc
         private GrpcChannel? _channel;
         private BrokerService.BrokerServiceClient? _client;
         private Guid _id;
-        private readonly IEffectStore _effectStore = new EffectStore(GetEffectsPath());
+        private string _name = string.Empty;
+        private IEffectStore _effectStore = null!;
         private readonly Dictionary<int, IDataHandler> _dataHandlers = new()
         {
             [1] = new DataHandler1(),
@@ -25,16 +27,31 @@ namespace receiversGrpc
 
         private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(3);
         private static readonly TimeSpan ControlTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan LeaseExtendInterval = TimeSpan.FromSeconds(2);
 
         public GrpcReceiver(FileLogger logger)
         {
             _logger = logger;
         }
-        private static string GetEffectsPath() =>
-          Environment.GetEnvironmentVariable("RECEIVER_EFFECTS_PATH") ?? "effects-grpc.log";
-        public void Start()
+        // Fiecare receiver are propriul fisier de efecte: acelasi mesaj ajunge legitim
+        // la mai multi abonati, deduplicarea e per receiver, nu globala
+        private static string GetEffectsPath(string name)
         {
-            _id = Guid.CreateVersion7();
+            string? dir = Environment.GetEnvironmentVariable("RECEIVER_EFFECTS_DIR");
+            return string.IsNullOrWhiteSpace(dir)
+                ? $"effects-grpc-{name}.log"
+                : Path.Combine(dir, $"effects-grpc-{name}.log");
+        }
+
+        private static string GetName()
+        {
+            string? env = Environment.GetEnvironmentVariable("RECEIVER_NAME");
+            if (!string.IsNullOrWhiteSpace(env))
+            {
+                return env;
+            }
+            Console.WriteLine("Give receiver username");
+            return Console.ReadLine() ?? string.Empty;
         }
 
         private List<string> GetSubjects()
@@ -48,6 +65,21 @@ namespace receiversGrpc
         }
         public async Task RunAsync()
         {
+            try
+            {
+                _name = ReceiverIdentity.NormalizeName(GetName());
+            }
+            catch (InvalidDataException ex)
+            {
+                _logger.Log("Receiver", "Error", ex.Message);
+                return;
+            }
+            // Same username always gives the same id, so the broker keeps the deliveries
+            // of this receiver across restarts
+            _id = ReceiverIdentity.FromName(_name);
+            _effectStore = new EffectStore(GetEffectsPath(_name));
+            _logger.Log("Receiver", "Info", $"Receiver {_name} ({_id})");
+
             string brokerHost = GetBrokerHost();
             int brokerPort = GetBrokerPort();
             List<string> subjects = GetSubjects();
@@ -55,7 +87,11 @@ namespace receiversGrpc
             _channel = GrpcChannel.ForAddress($"http://{brokerHost}:{brokerPort}");
             _client = new BrokerService.BrokerServiceClient(_channel);
 
-            var request = new SubscribeRequest { ReceiverId = _id.ToString() };
+            var request = new SubscribeRequest
+            {
+                ReceiverId = _id.ToString(),
+                ReceiverName = _name
+            };
             request.Subject.AddRange(subjects);
 
             // The deliveries are stored by the broker for this receiver id,
@@ -126,7 +162,7 @@ namespace receiversGrpc
             }
             try
             {
-                string content = handler.Handle(message);
+                string content = await RunHandlerWithLeaseAsync(handler, message);
                 bool applied = _effectStore.ApplyOnce(message.MessageId, content);
                 if (applied)
                 {
@@ -184,6 +220,51 @@ namespace receiversGrpc
             catch (RpcException ex)
             {
                 _logger.Log("Receiver", "Warning", $"Nack for {messageId} failed: {ex.StatusCode}");
+            }
+        }
+        private async Task<string> RunHandlerWithLeaseAsync(IDataHandler handler, MessageEnvelope message)
+        {
+            using var finished = new CancellationTokenSource();
+            Task extender = ExtendLeaseLoopAsync(message.MessageId.ToString(), finished.Token);
+            try
+            {
+                return await Task.Run(() => handler.Handle(message));
+            }
+            finally
+            {
+                finished.Cancel();
+                await extender;
+            }
+        }
+
+        private async Task ExtendLeaseLoopAsync(string messageId, CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(LeaseExtendInterval, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                try
+                {
+                    await _client!.ExtendAsync(
+                        new ExtendRequest { ReceiverId = _id.ToString(), MessageId = messageId },
+                        deadline: DateTime.UtcNow + ControlTimeout,
+                        cancellationToken: ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (RpcException ex)
+                {
+                    // Brokerul va retrimite mesajul, EffectStore opreste d
+                    _logger.Log("Receiver", "Warning", $"Extend for {messageId} failed: {ex.StatusCode}");
+                }
             }
         }
     }

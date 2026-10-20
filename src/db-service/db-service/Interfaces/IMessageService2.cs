@@ -15,6 +15,12 @@ namespace db_service.Interfaces
         Task<List<DueDelivery>> GetDueDeliveriesAsync(DateTime now, IReadOnlyCollection<Guid> connectedReceiverIds, int batchSize);
         Task<MessageEnvelope?> LoadEnvelopeAsync(Guid messageId);
         Task<int> RecordAttemptAsync(Guid messageId, Guid receiverId, DateTime now, DateTime nextAttemptAt);
+        Task UpsertSubscriptionAsync(Guid receiverId, string name, IReadOnlyCollection<string> subjects);
+
+
+
+        Task<IReadOnlyCollection<Guid>> GetSubscriberIdsForSubjectsAsync(IEnumerable<string> subjects);
+        Task<int> ExtendLeaseAsync(Guid messageId, Guid receiverId, DateTime nextAttemptAt);
 
         // IDEMPOTENT METHODS
         Task<int> MarkAckedAsync(Guid messageId, Guid receiverID);

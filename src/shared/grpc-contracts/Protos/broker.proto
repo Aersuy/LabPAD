@@ -15,11 +15,18 @@ service BrokerService {
   rpc Subscribe (SubscribeRequest) returns (stream Delivery);
   rpc Acknowledge (AckRequest) returns (AckReply);
   rpc Reject (NackRequest) returns (AckReply);
+  // Receiverul nu proceseza mesajul, amana relivrarea
+  rpc Extend (ExtendRequest) returns (AckReply);
 }
 
 // Same content as shared.Models.DataPayload
 message DataPayload {
   string content = 1;
+}
+
+message ExtendRequest {
+  string receiver_id = 1;
+  string message_id = 2;
 }
 
 // Same fields as shared.Models.MessageEnvelope, guids are sent as strings
@@ -47,6 +54,7 @@ message PublishReply {
 message SubscribeRequest {
   string receiver_id = 1;
   repeated string subject = 2;
+  string receiver_name = 3;
 }
 
 message Delivery {
